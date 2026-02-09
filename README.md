@@ -169,16 +169,13 @@ http://localhost:8501
 
 # 🔐 Creating Admin
 
-Register a normal user
-
-Use admin setup endpoint:
+There is one by default admin when system starts...
 ```bash
-POST /admin/create-admin
-````
-## Provide:
+Username : admin
+Password : admin123
+```
 
-email = user email  
-setup_key = ADMIN_SETUP_KEY from docker-compose  
+Then there is endpoint in the Swagger UI where you can add a new admin but you will need a key to make one.
 
 ---
 
