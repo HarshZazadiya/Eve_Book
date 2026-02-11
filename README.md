@@ -223,7 +223,7 @@ docker-compose.yaml
 
 ---
 
-📸 Screenshots
+## 📸 Screenshots
 USER DASHBOARD
 
 <img width="1919" height="1092" alt="Screenshot 2026-02-09 152621" src="https://github.com/user-attachments/assets/a6093c5c-82cc-4973-996a-46067baa5de5" />
