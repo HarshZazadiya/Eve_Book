@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import FastAPI, APIRouter, Depends, File, HTTPException, UploadFile, Form
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import Annotated, List
@@ -16,11 +16,17 @@ import json
 from datetime import date
 import os
 from routers.user import serialize_event
+import shutil
+import uuid
+from datetime import datetime
 
 router = APIRouter(
     prefix="/host",
     tags=["Host"],
 )
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class EventRequest(BaseModel):
     title: str
@@ -90,39 +96,95 @@ async def get_events(host: host_dependency, db: db_dependency):
 
 
 @router.post("/event")
-async def host_event(host: host_dependency, db: db_dependency, event_request: EventRequest):
+async def host_event(
+    host: host_dependency,
+    db: db_dependency,
+    title: str = Form(...),
+    venue: str = Form(...),
+    date: str = Form(...),
+    seats: int = Form(...),
+    ticket_price: int = Form(...),
+    document: UploadFile = File(None)
+):
     HOSTING_FEE = 500
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
+
+    wallet = db.query(Wallets).filter(
+        Wallets.owner_type == "host",
+        Wallets.owner_id == host.id
+    ).first()
 
     if not wallet or wallet.balance < HOSTING_FEE:
         raise HTTPException(403, "Insufficient wallet balance")
+
     wallet.balance -= HOSTING_FEE
 
     payment = HostingPayments(
-        host_id = host.id,
-        amount = HOSTING_FEE,
-        status = "success"
+        host_id=host.id,
+        amount=HOSTING_FEE,
+        status="success"
     )
     db.add(payment)
 
+    document_path = None
+    UPLOAD_DIR = "uploads"
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    # ---------------- PDF Upload ----------------
+    if document:
+
+        if document.content_type != "application/pdf":
+            raise HTTPException(400, "Only PDF files are allowed")
+
+        unique_name = f"{uuid.uuid4()}_{document.filename}"
+        file_location = os.path.join(UPLOAD_DIR, unique_name)
+
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(document.file, buffer)
+
+        document_path = file_location
+
+    # ---------------- Default PDF ----------------
+    else:
+        safe_title = title.replace(" ", "_")
+        default_filename = f"default_{host.id}_{safe_title}.pdf"
+        file_location = os.path.join(UPLOAD_DIR, default_filename)
+
+        from reportlab.pdfgen import canvas
+
+        c = canvas.Canvas(file_location)
+        c.drawString(100, 800, f"Event Name: {title}")
+        c.drawString(100, 780, f"Venue: {venue}")
+        c.drawString(100, 760, f"Date: {date}")
+        c.drawString(100, 740, f"Seats: {seats}")
+        c.drawString(100, 720, f"Ticket Price: {ticket_price}")
+        c.save()
+
+        document_path = file_location
+
+    # ---------------- Save Event ----------------
     event = Events(
-        title = event_request.title,
-        venue = event_request.venue,
-        date = event_request.date,
-        seats = event_request.seats,
-        available_seats = event_request.seats,
-        host_id = host.id,
-        ticket_price = event_request.ticket_price
+        title=title,
+        venue=venue,
+        date=datetime.strptime(date, "%Y-%m-%d").date(),
+        seats=seats,
+        available_seats=seats,
+        host_id=host.id,
+        ticket_price=ticket_price,
+        document_path=document_path
     )
 
     db.add(event)
     db.commit()
     db.refresh(event)
+
     if redis_client:
         await redis_client.delete(f"host_events:{host.id}")
         await redis_client.delete(f"wallet:host:{host.id}")
 
-    return {"event_id": event.id, "message": "Event created successfully"}
+    return {
+        "event_id": event.id,
+        "message": "Event created successfully"
+    }
 
 @router.delete("/event/{event_id}")
 async def delete_event(host: host_dependency, db: db_dependency, event_id: int):

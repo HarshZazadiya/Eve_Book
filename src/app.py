@@ -209,22 +209,48 @@ def user_dashboard():
                     requests.post(f"{BASE_URL}/user/event/{e['id']}", headers=headers())
                     st.success("Booked")
                     st.rerun()
+                if e.get("more_details"):
+                    st.link_button(
+                        "More Details",
+                        f"{BASE_URL}{e['more_details']}"
+                    )
 
     if menu == "My Bookings":
         res = requests.get(f"{BASE_URL}/user/myEvents", headers=headers())
         if res.status_code != 200:
             st.error("Failed to fetch bookings")
             return
+
         bookings = res.json()
         if not isinstance(bookings, list) or len(bookings) == 0:
             st.info("No bookings found")
             return
+
         for b in bookings:
             with st.container(border=True):
 
                 st.subheader(f"Booking #{b['booking_id']}")
                 st.write(f"Event ID : {b['event_id']}")
                 st.write(f"Tickets : {b['ticket_count']}")
+
+                # 🔥 Fetch event details to get document
+                event_res = requests.get(
+                    f"{BASE_URL}/user/events",
+                    headers=headers()
+                )
+
+                if event_res.status_code == 200:
+                    events = event_res.json()
+                    event = next(
+                        (ev for ev in events if ev["id"] == b["event_id"]),
+                        None
+                    )
+
+                    if event and event.get("more_details"):
+                        st.link_button(
+                            "More Details",
+                            f"{BASE_URL}{event['more_details']}"
+                        )
 
                 if st.button("Cancel", key=f"cancel_{b['booking_id']}"):
                     requests.delete(
@@ -262,20 +288,39 @@ def host_dashboard():
         seats = st.number_input("Seats", min_value=1)
         price = st.number_input("Ticket Price", min_value=1)
 
+        document = st.file_uploader("Upload Event PDF (optional)", type=["pdf"])
+
         if st.button("Create Event"):
-            requests.post(
+
+            data = {
+                "title": title,
+                "venue": venue,
+                "date": str(date),
+                "seats": seats,
+                "ticket_price": price
+            }
+
+            files = {}
+
+            if document:
+                files["document"] = (
+                    document.name,
+                    document,
+                    "application/pdf"
+                )
+
+            response = requests.post(
                 f"{BASE_URL}/host/event",
                 headers=headers(),
-                json={
-                    "title": title,
-                    "venue": venue,
-                    "date": str(date),
-                    "seats": seats,
-                    "ticket_price": price
-                }
+                data=data,       # NOT json
+                files=files      # enables multipart/form-data
             )
-            st.success("Created")
-            st.rerun()
+
+            if response.status_code == 200:
+                st.success("Created")
+                st.rerun()
+            else:
+                st.error(response.text)
 
     if menu == "My Events":
 
@@ -288,14 +333,23 @@ def host_dashboard():
                 st.subheader(e["title"])
                 st.write(e["venue"])
                 st.write(e["date"])
+                col1, col2 = st.columns([1, 1])
 
-                if st.button("Delete", key=f"del_{e['id']}"):
-                    requests.delete(
-                        f"{BASE_URL}/host/event/{e['id']}",
-                        headers=headers()
-                    )
-                    st.success("Deleted")
-                    st.rerun()
+                with col1:
+                    if st.button("Delete", key=f"del_{e['id']}"):
+                        requests.delete(
+                            f"{BASE_URL}/host/event/{e['id']}",
+                            headers=headers()
+                        )
+                        st.success("Deleted")
+                        st.rerun()
+
+                with col2:
+                    if e.get("more_details"):
+                        st.link_button(
+                            "More Details",
+                            f"{BASE_URL}{e['more_details']}"
+                        )
 
 
 # =================================================
@@ -350,7 +404,11 @@ def admin_dashboard():
 
                 st.write(f"📅 {e['date']}")
                 st.write(f"Seats : {e['available_seats']} / {e['total_seats']}")
-
+                if e.get("more_details"):
+                    st.link_button(
+                        "More Details",
+                        f"{BASE_URL}{e['more_details']}"
+                    )
                 if st.button("Delete Event", key=f"admin_del_{e['event_id']}"):
                     requests.delete(
                         f"{BASE_URL}/admin/event/{e['event_id']}",

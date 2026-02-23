@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 from model import Users
 from routers.auth import bcrypt_context
-
+from fastapi.staticfiles import StaticFiles
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
 
@@ -54,9 +54,11 @@ async def lifespan(app: FastAPI):
     print("App shutting down")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan = lifespan)
 
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    
 Base.metadata.create_all(bind=engine)
 
 app.include_router(auth.router)

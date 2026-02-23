@@ -46,7 +46,9 @@ def serialize_event(event: Events):
         "date": event.date.isoformat() if event.date else None,
         "available_seats": event.available_seats,
         "host_id": event.host_id,
-        "ticket_price": event.ticket_price
+        "ticket_price": event.ticket_price,
+        "more_details": f"/uploads/{os.path.basename(event.document_path)}"
+            if event.document_path else None,
     }
 
 
@@ -83,9 +85,9 @@ async def get_user_info(user: user_dependency):
 @router.get("/events")
 async def get_all_events(db: db_dependency, user: user_dependency):
 
-    cached = await redis_client.get(EVENTS_LIST_KEY)
-    if cached:
-        return json.loads(cached)
+    # cached = await redis_client.get(EVENTS_LIST_KEY)
+    # if cached:
+    #     return json.loads(cached)
 
     events = db.query(Events).all()
     if not events:

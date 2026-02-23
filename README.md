@@ -180,14 +180,13 @@ Then there is endpoint in the Swagger UI where you can add a new admin but you w
 ---
 
 # 💰 Wallet Logic
-## 🎟 Booking Flow
+### 🎟 Booking Flow
 
 User wallet ➜ Deduct ticket price
 Host wallet ➜ Receives payment
 
----
 
-## ❌ Booking Cancellation / Admin Deletion
+### ❌ Booking Cancellation / Admin Deletion
 
 User wallet ➜ Refunded
 Host wallet ➜ Deducted

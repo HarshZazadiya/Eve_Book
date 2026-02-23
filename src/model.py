@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, ForeignKey, Date, text, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, ForeignKey, Date, text, String, Boolean, DateTime, Text
 from database import Base
 from sqlalchemy.sql import func
 
@@ -45,7 +45,8 @@ class Events(Base):
     seats = Column(Integer, nullable = False)
     available_seats = Column(Integer, nullable = False)
     ticket_price = Column(Integer, nullable=False, default=100)
-
+    document_path = Column(String, nullable=True)
+    document_processed = Column(Boolean, default=False)
 
 class BookingPayments(Base):
     __tablename__ = "booking_payments"

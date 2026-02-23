@@ -7,6 +7,8 @@ from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
 from jose import jwt
 from model import HostingPayments
 from model import HostingPayments, HostPromotions
+import os
+
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # ---------------- DB ----------------
@@ -73,7 +75,7 @@ async def create_admin(db: db_dependency,email: str = Body(...),setup_key: str =
 
 @router.get("/users")
 async def get_all_users(admin: admin_dependency, db: db_dependency):
-    users = db.query(Users).all()
+    users = db.query(Users).filter(Users.role == "user").all()
 
     return [
         {
@@ -124,14 +126,11 @@ async def delete_event(event_id: int, admin: admin_dependency, db: db_dependency
 
 @router.delete("/booking/{booking_id}")
 async def delete_booking(booking_id: int, admin: admin_dependency, db: db_dependency):
-
     booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
-
     if not booking:
         raise HTTPException(404, "Booking not found")
 
     refund_booking(db, booking)
-
     db.commit()
 
     return {"message": "Booking deleted & refunded"}
@@ -198,23 +197,26 @@ async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
         raise HTTPException(500, f"Failed to demote host: {str(e)}")
 
 # VIEW ALL EVENTS
-
 @router.get("/events")
 async def get_all_events(admin: admin_dependency, db: db_dependency):
     events = db.query(Events).all()
     result = []
+
     for event in events:
         host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
+
         result.append({
             "event_id": event.id,
             "title": event.title,
             "venue": event.venue,
-            "date": event.date,
+            "date": str(event.date),
             "total_seats": event.seats,
             "available_seats": event.available_seats,
             "ticket_price": event.ticket_price,
             "host_company": host.company_name if host else None,
-            "host_email": host.email if host else None
+            "host_email": host.email if host else None,
+            "more_details": f"/uploads/{os.path.basename(event.document_path)}"
+                if event.document_path else None
         })
 
     return result
