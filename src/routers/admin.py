@@ -207,6 +207,7 @@ async def get_all_events(admin: admin_dependency, db: db_dependency):
 
         result.append({
             "event_id": event.id,
+            "host_id": event.host_id,
             "title": event.title,
             "venue": event.venue,
             "date": str(event.date),
@@ -272,4 +273,53 @@ async def get_all_wallets(admin: admin_dependency, db: db_dependency):
                 "balance": wallet.balance
             })
     
+    return result
+
+@router.get("/promotions")
+async def get_all_promotions(admin: admin_dependency, db: db_dependency):
+    promotions = db.query(HostPromotions).all()
+    result = []
+    for promotion in promotions:
+        host = db.query(Hosts).filter(Hosts.id == promotion.user_id).first()
+        result.append({
+            "user_id" : promotion.user_id,
+            "company_name" : host.company_name if host else None,
+            "email" : host.email if host else None,
+            "amount" : promotion.amount,
+            "status" : promotion.status
+        })
+    return result
+
+@router.get("/booking_transactions")
+async def get_all_booking_transactions(admin: admin_dependency, db: db_dependency):
+    transactions = db.query(BookingPayments).all()
+    result = []
+
+    for transaction in transactions:
+        booking = db.query(Bookings).filter(Bookings.id == transaction.booking_id).first()
+        user = db.query(Users).filter(Users.id == booking.user_id).first() if booking else None
+
+        result.append({
+            "booking_id": transaction.booking_id,
+            "user_id": booking.user_id if booking else None,
+            "username": user.username if user else None,
+            "amount": transaction.amount,
+            "status": transaction.status
+        })
+
+    return result
+
+@router.get("/host_transactions")
+async def get_all_hosting_transactions(admin: admin_dependency, db: db_dependency):
+    transactions = db.query(HostingPayments).all()
+    result = []
+    for transaction in transactions:
+        host = db.query(Hosts).filter(Hosts.id == transaction.host_id).first()
+        result.append({
+            "host_id": transaction.host_id,
+            "amount": transaction.amount,
+            "company_name": host.company_name if host else None,
+            "status": transaction.status
+        })
+
     return result

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import streamlit as st
 import requests
 
@@ -270,6 +272,9 @@ def user_dashboard():
 # =================================================
 # HOST DASHBOARD
 # =================================================
+# =================================================
+# HOST DASHBOARD
+# =================================================
 def host_dashboard():
 
     menu = smart_tabs(
@@ -277,14 +282,16 @@ def host_dashboard():
         key="host_tab"
     )
 
+    # ---------------- WALLET ----------------
     if menu == "Wallet":
         wallet_ui()
 
-    if menu == "Create Event":
+    # ---------------- CREATE EVENT ----------------
+    elif menu == "Create Event":
 
         title = st.text_input("Title")
         venue = st.text_input("Venue")
-        date = st.date_input("Date")
+        date_val = st.date_input("Date")
         seats = st.number_input("Seats", min_value=1)
         price = st.number_input("Ticket Price", min_value=1)
 
@@ -295,13 +302,12 @@ def host_dashboard():
             data = {
                 "title": title,
                 "venue": venue,
-                "date": str(date),
+                "date": str(date_val),
                 "seats": seats,
                 "ticket_price": price
             }
 
             files = {}
-
             if document:
                 files["document"] = (
                     document.name,
@@ -309,179 +315,430 @@ def host_dashboard():
                     "application/pdf"
                 )
 
-            response = requests.post(
+            res = requests.post(
                 f"{BASE_URL}/host/event",
                 headers=headers(),
-                data=data,       # NOT json
-                files=files      # enables multipart/form-data
+                data=data,
+                files=files
             )
 
-            if response.status_code == 200:
-                st.success("Created")
+            if res.status_code == 200:
+                st.success("Event Created Successfully")
                 st.rerun()
             else:
-                st.error(response.text)
+                st.error(res.text)
 
-    if menu == "My Events":
+    # ---------------- MY EVENTS ----------------
+    elif menu == "My Events":
 
-        events = requests.get(f"{BASE_URL}/host/events", headers=headers()).json()
+        res = requests.get(f"{BASE_URL}/host/events", headers=headers())
+
+        if res.status_code != 200:
+            st.error("Failed to fetch events")
+            return
+
+        events = res.json()
+
+        if not events:
+            st.info("No events created yet")
+            return
 
         for e in events:
 
-            with st.container(border=True):
+            with st.expander(f"{e['title']} — {e['date']}"):
 
-                st.subheader(e["title"])
-                st.write(e["venue"])
-                st.write(e["date"])
-                col1, col2 = st.columns([1, 1])
+                # ---------------- EVENT INFO ----------------
+                st.write(f"📍 Venue: {e['venue']}")
+                st.write(f"🎟 Seats: {e['available_seats']} / {e['seats']}")
+                st.write(f"💰 Ticket Price: ₹{e['ticket_price']}")
 
+                st.divider()
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                # -------- DELETE --------
                 with col1:
                     if st.button("Delete", key=f"del_{e['id']}"):
-                        requests.delete(
+                        del_res = requests.delete(
                             f"{BASE_URL}/host/event/{e['id']}",
                             headers=headers()
                         )
-                        st.success("Deleted")
-                        st.rerun()
+                        if del_res.status_code == 200:
+                            st.success("Event deleted")
+                            st.rerun()
+                        else:
+                            st.error(del_res.text)
 
+                # -------- VIEW DOCUMENT --------
                 with col2:
                     if e.get("more_details"):
                         st.link_button(
-                            "More Details",
+                            "View Document",
                             f"{BASE_URL}{e['more_details']}"
                         )
 
+                # -------- EDIT TOGGLE --------
+                with col3:
+                    if st.button("Edit Event", key=f"edit_toggle_{e['id']}"):
+                        st.session_state[f"edit_mode_{e['id']}"] = not st.session_state.get(
+                            f"edit_mode_{e['id']}", False
+                        )
+
+                # -------- DOCUMENT TOGGLE --------
+                with col4:
+                    if st.button("Update Document", key=f"doc_toggle_{e['id']}"):
+                        st.session_state[f"doc_mode_{e['id']}"] = not st.session_state.get(
+                            f"doc_mode_{e['id']}", False
+                        )
+
+                # =================================================
+                # EDIT EVENT SECTION
+                # =================================================
+                if st.session_state.get(f"edit_mode_{e['id']}", False):
+
+                    st.divider()
+                    st.subheader("Update Event Details")
+
+                    new_title = st.text_input("Title", value=e["title"], key=f"title_{e['id']}")
+                    new_venue = st.text_input("Venue", value=e["venue"], key=f"venue_{e['id']}")
+                    new_date = st.date_input(
+                        "Date",
+                        value=datetime.strptime(e["date"], "%Y-%m-%d"),
+                        key=f"date_{e['id']}"
+                    )
+                    new_seats = st.number_input(
+                        "Seats",
+                        value=e["seats"],
+                        min_value=1,
+                        key=f"seats_{e['id']}"
+                    )
+                    new_price = st.number_input(
+                        "Ticket Price",
+                        value=e["ticket_price"],
+                        min_value=1,
+                        key=f"price_{e['id']}"
+                    )
+
+                    if st.button("Save Changes", key=f"save_{e['id']}"):
+
+                        update_data = {
+                            "title": new_title,
+                            "venue": new_venue,
+                            "date": str(new_date),
+                            "seats": new_seats,
+                            "ticket_price": new_price
+                        }
+
+                        upd_res = requests.put(
+                            f"{BASE_URL}/host/event/{e['id']}",
+                            headers=headers(),
+                            json=update_data
+                        )
+
+                        if upd_res.status_code == 200:
+                            st.success("Event updated")
+                            st.session_state[f"edit_mode_{e['id']}"] = False
+                            st.rerun()
+                        else:
+                            st.error(upd_res.text)
+
+                # =================================================
+                # UPDATE DOCUMENT SECTION (SEPARATE)
+                # =================================================
+                if st.session_state.get(f"doc_mode_{e['id']}", False):
+
+                    st.divider()
+                    st.subheader("Upload New Document (PDF Only)")
+
+                    new_doc = st.file_uploader(
+                        "Select PDF",
+                        type=["pdf"],
+                        key=f"doc_upload_{e['id']}"
+                    )
+
+                    if new_doc:
+                        if st.button("Upload Document", key=f"upload_btn_{e['id']}"):
+
+                            files = {
+                                "document": (
+                                    new_doc.name,
+                                    new_doc,
+                                    "application/pdf"
+                                )
+                            }
+
+                            doc_res = requests.put(
+                                f"{BASE_URL}/host/event_document/{e['id']}",
+                                headers=headers(),
+                                files=files
+                            )
+
+                            if doc_res.status_code == 200:
+                                st.success("Document updated successfully")
+                                st.session_state[f"doc_mode_{e['id']}"] = False
+                                st.rerun()
+                            else:
+                                st.error(doc_res.text)
 
 # =================================================
 # ADMIN DASHBOARD
 # =================================================
 def admin_dashboard():
 
-    menu = smart_tabs(
-        ["Users", "Hosts", "Events", "Bookings", "Wallets"],
+    headers_auth = headers()
+
+    tab = smart_tabs(
+        ["Users", "Hosts", "Transactions", "Promotions", "Wallets"],
         key="admin_tab"
     )
 
-    # USERS
-    if menu == "Users":
+    # ================= USERS =================
+    if tab == "Users":
 
-        users = requests.get(f"{BASE_URL}/admin/users", headers=headers()).json()
+        users_res = requests.get(f"{BASE_URL}/admin/users", headers=headers_auth)
+        bookings_res = requests.get(f"{BASE_URL}/admin/bookings", headers=headers_auth)
+        events_res = requests.get(f"{BASE_URL}/admin/events", headers=headers_auth)
+
+        if users_res.status_code != 200:
+            st.error("Failed to fetch users")
+            return
+
+        users = users_res.json()
+        bookings = bookings_res.json() if bookings_res.status_code == 200 else []
+        events = events_res.json() if events_res.status_code == 200 else []
+
+        if not users:
+            st.info("No users found")
+            return
 
         for u in users:
-            with st.container(border=True):
-                st.subheader(u["username"])
-                st.write(u["email"])
-                st.caption(u["role"])
 
-    # HOSTS
-    if menu == "Hosts":
+            with st.expander(f"{u['username']} — {u['email']}"):
 
-        hosts = requests.get(f"{BASE_URL}/admin/hosts", headers=headers()).json()
+                user_bookings = [
+                    b for b in bookings if b["user_username"] == u["username"]
+                ]
+
+                if not user_bookings:
+                    st.info("No bookings")
+                else:
+                    for b in user_bookings:
+
+                        st.write(f"Event: {b['event_title']}")
+                        st.write(f"Tickets: {b['ticket_count']}")
+                        st.write(f"Payment: ₹{b['payment_amount']} ({b['payment_status']})")
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            if st.button("Delete Booking", key=f"admin_del_booking_{b['booking_id']}"):
+                                requests.delete(
+                                    f"{BASE_URL}/admin/booking/{b['booking_id']}",
+                                    headers=headers_auth
+                                )
+                                st.success("Booking deleted")
+                                st.rerun()
+
+                        with col2:
+                            event = next(
+                                (e for e in events if e["event_id"] == b["event_id"]),
+                                None
+                            )
+                            if event and event.get("more_details"):
+                                st.link_button(
+                                    "More Details",
+                                    f"{BASE_URL}{event['more_details']}"
+                                )
+
+                        st.divider()
+
+    # ================= HOSTS =================
+    elif tab == "Hosts":
+
+        hosts_res = requests.get(f"{BASE_URL}/admin/hosts", headers=headers_auth)
+        events_res = requests.get(f"{BASE_URL}/admin/events", headers=headers_auth)
+        bookings_res = requests.get(f"{BASE_URL}/admin/bookings", headers=headers_auth)
+
+        if hosts_res.status_code != 200:
+            st.error("Failed to fetch hosts")
+            return
+
+        hosts = hosts_res.json()
+        events = events_res.json() if events_res.status_code == 200 else []
+        bookings = bookings_res.json() if bookings_res.status_code == 200 else []
+
+        if not hosts:
+            st.info("No hosts found")
+            return
 
         for h in hosts:
-            with st.container(border=True):
 
-                st.subheader(h["company_name"])
-                st.write(h["email"])
+            with st.expander(f"{h['company_name']} — {h['email']}"):
 
-                if st.button("Demote", key=f"demote_{h['id']}"):
-                    requests.post(
-                        f"{BASE_URL}/admin/demote-host/{h['id']}",
-                        headers=headers()
-                    )
-                    st.success("Demoted")
-                    st.rerun()
+                # Match via email (safer than company name)
+                host_events = [
+                    e for e in events if e["host_email"] == h["email"]
+                ]
 
-    # EVENTS
-    if menu == "Events":
+                if not host_events:
+                    st.info("No events hosted")
+                else:
+                    for e in host_events:
 
-        events = requests.get(f"{BASE_URL}/admin/events", headers=headers()).json()
-        bookings = requests.get(f"{BASE_URL}/admin/bookings", headers=headers()).json()
+                        st.subheader(f"{e['title']} — {e['venue']}")
+                        st.write(f"Date: {e['date']}")
+                        st.write(f"Seats: {e['available_seats']} / {e['total_seats']}")
+                        st.write(f"Ticket Price: ₹{e['ticket_price']}")
 
-        for e in events:
+                        col1, col2 = st.columns(2)
 
-            with st.expander(f"{e['title']} — {e['venue']}"):
+                        with col1:
+                            if st.button("Delete Event", key=f"admin_del_event_{e['event_id']}"):
+                                requests.delete(
+                                    f"{BASE_URL}/admin/event/{e['event_id']}",
+                                    headers=headers_auth
+                                )
+                                st.success("Event deleted")
+                                st.rerun()
 
-                st.write(f"📅 {e['date']}")
-                st.write(f"Seats : {e['available_seats']} / {e['total_seats']}")
-                if e.get("more_details"):
-                    st.link_button(
-                        "More Details",
-                        f"{BASE_URL}{e['more_details']}"
-                    )
-                if st.button("Delete Event", key=f"admin_del_{e['event_id']}"):
-                    requests.delete(
-                        f"{BASE_URL}/admin/event/{e['event_id']}",
-                        headers=headers()
-                    )
-                    st.rerun()
+                        with col2:
+                            if e.get("more_details"):
+                                st.link_button(
+                                    "More Details",
+                                    f"{BASE_URL}{e['more_details']}"
+                                )
 
-                st.markdown("### Bookings")
+                        event_bookings = [
+                            b for b in bookings if b["event_id"] == e["event_id"]
+                        ]
 
-                event_bookings = [b for b in bookings if b["event_id"] == e["event_id"]]
+                        if event_bookings:
+                            st.markdown("**Bookings:**")
 
-                if not event_bookings:
-                    st.info("No bookings")
+                            for b in event_bookings:
+                                with st.container(border=True):
 
-                for b in event_bookings:
+                                    col1, col2, col3 = st.columns([3,2,1])
 
-                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.write(f"👤 {b['user_username']}")
+                                        st.write(f"🎟 {b['ticket_count']} tickets")
 
-                    with col1:
-                        st.write(f"{b['user_username']} — {b['ticket_count']} tickets")
+                                    with col2:
+                                        st.write(f"💰 ₹{b['payment_amount']} ({b['payment_status']})")
 
-                    with col2:
-                        if st.button("Delete", key=f"bk_del_{b['booking_id']}"):
-                            requests.delete(
-                                f"{BASE_URL}/admin/booking/{b['booking_id']}",
-                                headers=headers()
-                            )
-                            st.rerun()
+                                    with col3:
+                                        if st.button("Delete", key=f"admin_del_booking_{b['booking_id']}"):
+                                            requests.delete(
+                                                f"{BASE_URL}/admin/booking/{b['booking_id']}",
+                                                headers=headers()
+                                            )
+                                            st.success("Booking deleted & refunded")
+                                            st.rerun()
 
-    # BOOKINGS
-    if menu == "Bookings":
+                        st.divider()
 
-        bookings = requests.get(f"{BASE_URL}/admin/bookings", headers=headers()).json()
+    # ================= TRANSACTIONS =================
+    elif tab == "Transactions":
 
-        for b in bookings:
+        subtab = smart_tabs(
+            ["User Transactions", "Host Transactions"],
+            key="admin_tx_tab"
+        )
 
-            with st.container(border=True):
+        if subtab == "User Transactions":
 
-                st.subheader(f"Booking #{b['booking_id']}")
-                st.write(f"{b['user_username']} → {b['event_title']}")
-                st.write(f"₹ {b['payment_amount']}")
+            res = requests.get(
+                f"{BASE_URL}/admin/booking_transactions",
+                headers=headers_auth
+            )
 
-                if st.button("Delete", key=f"booking_del_{b['booking_id']}"):
-                    requests.delete(
-                        f"{BASE_URL}/admin/booking/{b['booking_id']}",
-                        headers=headers()
-                    )
-                    st.rerun()
+            if res.status_code != 200:
+                st.error("Failed to fetch transactions")
+                return
 
-    # WALLETS
-    if menu == "Wallets":
+            transactions = res.json()
 
-        wallets = requests.get(f"{BASE_URL}/admin/wallets", headers=headers()).json()
+            if not transactions:
+                st.info("No user transactions")
+            else:
+                for t in transactions:
+                    with st.container(border=True):
+                        st.subheader(f"Username :  {t['username']}")
+                        st.write(f"Booking ID : {t['booking_id']}")
+                        st.write(f"Amount : ₹{t['amount']}")
+                        st.write(f"Status : {t['status']}")
 
-        for w in wallets:
+        else:
 
-            with st.container(border=True):
+            res = requests.get(
+                f"{BASE_URL}/admin/host_transactions",
+                headers=headers_auth
+            )
 
-                col1, col2 = st.columns([4, 1])
+            if res.status_code != 200:
+                st.error("Failed to fetch host transactions")
+                return
 
-                with col1:
-                    if w["owner_type"] == "user":
-                        st.subheader(w["username"])
-                    else:
-                        st.subheader(w["company_name"])
+            transactions = res.json()
 
-                    st.write(w["email"])
-                    st.caption(f"{w['owner_type']} ID : {w['owner_id']}")
+            if not transactions:
+                st.info("No host transactions")
+            else:
+                for t in transactions:
+                    with st.container(border=True):
+                        st.subheader(f"Company Name : {t['company_name']}")
+                        st.write(f"Host ID : {t['host_id']}")
+                        st.write(f"Amount : ₹{t['amount']}")
+                        st.write(f"Status : {t['status']}")
 
-                with col2:
-                    st.metric("Balance", f"₹ {w['balance']}")
+    # ================= PROMOTIONS =================
+    elif tab == "Promotions":
 
+        res = requests.get(
+            f"{BASE_URL}/admin/promotions",
+            headers=headers_auth
+        )
 
+        if res.status_code != 200:
+            st.error("Failed to fetch promotions")
+            return
+
+        promotions = res.json()
+
+        if not promotions:
+            st.info("No promotions found")
+        else:
+            for p in promotions:
+                with st.container(border=True):
+                    st.subheader(p["company_name"] or "N/A")
+                    st.write(f"Email: {p['email']}")
+                    st.write(f"Amount: ₹{p['amount']}")
+                    st.write(f"Status: {p['status']}")
+
+    # ================= WALLETS =================
+    elif tab == "Wallets":
+
+        res = requests.get(
+            f"{BASE_URL}/admin/wallets",
+            headers=headers_auth
+        )
+
+        if res.status_code != 200:
+            st.error("Failed to fetch wallets")
+            return
+
+        wallets = res.json()
+
+        if not wallets:
+            st.info("No wallets found")
+        else:
+            for w in wallets:
+                with st.container(border=True):
+                    st.subheader(f"{w['owner_type'].upper()} — ID {w['owner_id']}")
+                    st.write(f"Balance: ₹{w['balance']}")
+
+                    
 # =================================================
 # ROUTER
 # =================================================
