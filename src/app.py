@@ -1,5 +1,4 @@
 from datetime import datetime
-
 import streamlit as st
 import requests
 
@@ -12,7 +11,10 @@ if "token" not in st.session_state:
     st.session_state.token = None
 if "role" not in st.session_state:
     st.session_state.role = None
-
+if "chat_open" not in st.session_state:
+    st.session_state.chat_open = False
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 # ---------------- HELPERS ----------------
 def headers():
@@ -162,13 +164,50 @@ if not st.session_state.token:
 role = st.session_state.role
 
 # ---------------- HEADER ----------------
-col1, col2 = st.columns([6, 1])
+col1, col2, col3 = st.columns([6, 1, 1])
 
 with col1:
     st.title(f"Dashboard — {role.upper()}")
 
 with col2:
     profile_menu()
+
+with col3:
+    with st.popover("💬 Chat"):
+
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        # Display chat messages
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+
+        # Chat input
+        user_input = st.chat_input("Ask about events...")
+
+        if user_input:
+            st.session_state.chat_history.append(
+                {"role": "user", "content": user_input}
+            )
+
+            with st.spinner("Thinking..."):
+                res = requests.post(
+                    f"{BASE_URL}/chat/ask",
+                    headers=headers() if st.session_state.token else {},
+                    json={"question": user_input}
+                )
+
+                if res.status_code == 200:
+                    answer = res.json().get("answer", "No response.")
+                else:
+                    answer = "Error contacting AI."
+
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": answer}
+            )
+
+            st.rerun()
 
 
 # =================================================
@@ -268,10 +307,6 @@ def user_dashboard():
             st.success("Promoted")
             st.rerun()
 
-
-# =================================================
-# HOST DASHBOARD
-# =================================================
 # =================================================
 # HOST DASHBOARD
 # =================================================
@@ -750,4 +785,3 @@ elif role == "host":
 
 elif role == "admin":
     admin_dashboard()
-

@@ -11,7 +11,7 @@ import json
 import os
 import shutil
 from datetime import date, datetime
-
+from pathlib import Path
 
 # --------------------------------------------------
 # Router Setup
@@ -177,15 +177,18 @@ async def host_event(
         c.drawString(100, 780, f"Venue: {venue}")
         c.drawString(100, 760, f"Date: {date}")
         c.drawString(100, 740, f"Seats: {seats}")
-        c.drawString(100, 720, f"Price: {ticket_price}")
+        c.drawString(100, 720, f"Price: {ticket_price} INR")
         c.save()
 
     event.document_path = filename
     db.commit()
 
+    # file_path = Path("uploads") / document.filename
+    # index_pdf(file_path,event.title)
+    
     if redis_client:
         await redis_client.delete(f"host_events : {host.id}")
-
+    
     return {"event_id" : event.id, "message" : "Event created successfully"}
 
 

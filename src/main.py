@@ -20,9 +20,9 @@ from contextlib import asynccontextmanager
 from model import Users
 from routers.auth import bcrypt_context
 from fastapi.staticfiles import StaticFiles
+from AI import chatbot
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,10 +36,10 @@ async def lifespan(app: FastAPI):
 
     if not admin:
         default_admin = Users(
-            username=username,
-            email=email,
-            hashed_password=bcrypt_context.hash(password),
-            role="admin"
+            username = username,
+            email = email,
+            hashed_password = bcrypt_context.hash(password),
+            role = "admin"
         )
 
         db.add(default_admin)
@@ -53,11 +53,9 @@ async def lifespan(app: FastAPI):
 
     print("App shutting down")
 
-
 app = FastAPI(lifespan = lifespan)
 
-
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory = "uploads"), name = "uploads")
     
 Base.metadata.create_all(bind=engine)
 
@@ -65,20 +63,21 @@ app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(host.router)
 app.include_router(admin.router)
+app.include_router(chatbot.router)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-oauth2_bearer = OAuth2PasswordBearer(tokenUrl="/auth/token")
+oauth2_bearer = OAuth2PasswordBearer(tokenUrl = "/auth/token")
 
 REDIS_URL = os.getenv("REDIS_URL")
 redis_client = Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 @app.post("/topUp")
-async def top_up_wallet(db: db_dependency, payment_request: PaymentRequest, token: Annotated[str, Depends(oauth2_bearer)]):
+async def top_up_wallet(db : db_dependency, payment_request : PaymentRequest, token : Annotated[str, Depends(oauth2_bearer)]):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms = [ALGORITHM])
         owner_type = payload.get("type")
         owner_id = payload.get("id")
 
@@ -104,32 +103,31 @@ async def top_up_wallet(db: db_dependency, payment_request: PaymentRequest, toke
         await redis_client.delete(f"wallet:{owner_type}:{owner_id}")
 
     return {
-        "owner_type": owner_type,
-        "wallet_balance": wallet.balance,
-        "message": "Wallet topped up successfully"
+        "owner_type" : owner_type,
+        "wallet_balance" : wallet.balance,
+        "message" : "Wallet topped up successfully"
     }
-
 
 @app.get("/myWallet")
 async def get_my_wallet(db: db_dependency, token: Annotated[str, Depends(oauth2_bearer)]):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms = [ALGORITHM])
         owner_type = payload.get("type")
         owner_id = payload.get("id")
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code = 401, detail = "Invalid token")
 
     if owner_type not in ("user", "host") or owner_id is None:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
+        raise HTTPException(status_code = 401, detail = "Invalid token payload")
 
     wallet = db.query(Wallets).filter(Wallets.owner_type == owner_type, Wallets.owner_id == owner_id).first()
 
     if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
+        raise HTTPException(status_code = 404, detail = "Wallet not found")
     if owner_type == "host" and wallet.balance < 500:
         data = {
-            "balance": wallet.balance,
-            "message": "Insufficient wallet balance. Please top up or host rights may be revoked."
+            "balance" : wallet.balance,
+            "message" : "Insufficient wallet balance. Please top up or host rights may be revoked."
         }
-    data = {"balance": float(wallet.balance)}
+    data = {"balance" : float(wallet.balance)}
     return data

@@ -9,7 +9,10 @@ from model import HostingPayments
 from model import HostingPayments, HostPromotions
 import os
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(
+    prefix = "/admin", 
+    tags = ["Admin"]
+)
 
 # ---------------- DB ----------------
 
@@ -24,10 +27,7 @@ db_dependency = Annotated[Session, Depends(get_db)]
 
 # ---------------- ADMIN AUTH ----------------
 
-async def get_current_admin(
-    token: Annotated[str, Depends(oauth2_bearer)],
-    db: db_dependency
-):
+async def get_current_admin(token : Annotated[str, Depends(oauth2_bearer)], db : db_dependency):
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
     if payload.get("role") != "admin":
@@ -42,7 +42,7 @@ async def get_current_admin(
 
 admin_dependency = Annotated[Users, Depends(get_current_admin)]
 
-def refund_booking(db: Session, booking: Bookings):
+def refund_booking(db : Session, booking : Bookings):
     wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
     payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
     event = db.query(Events).filter(Events.id == booking.event_id).first()

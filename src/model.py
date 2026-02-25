@@ -2,7 +2,29 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, ForeignKey, Date, text, String, Boolean, DateTime, Text
 from database import Base
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
+class ChatThread(Base):
+    __tablename__ = "chat_threads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, server_default = func.now())
+
+    messages = relationship("ChatMessage", back_populates = "thread", cascade = "all, delete")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable=False)
+    role = Column(String(20))  # user / assistant
+    content = Column(Text)
+    created_at = Column(DateTime, server_default = func.now())
+
+    thread = relationship("ChatThread", back_populates="messages")
+    
 class Users(Base):
     __tablename__ = "users"
 
@@ -21,13 +43,13 @@ class Hosts(Base):
     email = Column(String(200), unique=True, nullable = False)
     is_fee_paid = Column(Boolean, default = False)
     hashed_password = Column(String(200), nullable = False)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique = True)
     
 
 class HostPromotions(Base):
     __tablename__ = "host_promotions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index = True)
     user_id = Column(Integer, ForeignKey("users.id"))
     amount = Column(Integer)
     status = Column(String)
@@ -44,9 +66,9 @@ class Events(Base):
     date = Column(Date, nullable = False)
     seats = Column(Integer, nullable = False)
     available_seats = Column(Integer, nullable = False)
-    ticket_price = Column(Integer, nullable=False, default=100)
-    document_path = Column(String, nullable=True)
-    document_processed = Column(Boolean, default=False)
+    ticket_price = Column(Integer, nullable = False, default = 100)
+    document_path = Column(String, nullable = True)
+    document_processed = Column(Boolean, default = False)
 
 class BookingPayments(Base):
     __tablename__ = "booking_payments"
