@@ -11,6 +11,7 @@ from model import Users, Hosts, ChatThread, ChatMessage
 from AI.RAG import llm, search_documents
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from AI.RAG import get_vector_store
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -50,7 +51,6 @@ class ThreadInfo(BaseModel):
 # ============================================================
 # AUTH - FIXED FOR ADMIN
 # ============================================================
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 security = HTTPBearer()
 
 def get_user_from_token(token: str, db: Session):

@@ -1,0 +1,338 @@
+from fastapi import Depends, HTTPException, Body
+from typing import Annotated
+from sqlalchemy.orm import Session
+from database import SessionLocal
+from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments
+from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
+from jose import jwt
+from model import HostingPayments
+from model import HostingPayments, HostPromotions
+import os
+from langchain_core.tools import tool
+# ---------------- DB ----------------
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+db_dependency = Annotated[Session, Depends(get_db)]
+
+# ---------------- ADMIN AUTH ----------------
+@tool
+async def get_current_admin(token : Annotated[str, Depends(oauth2_bearer)], db : db_dependency):
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    if payload.get("role") != "admin":
+        raise HTTPException(403, "Admin only")
+
+    admin = db.query(Users).filter(Users.id == payload.get("id")).first()
+
+    if not admin:
+        raise HTTPException(401, "Invalid admin")
+
+    return admin
+
+admin_dependency = Annotated[Users, Depends(get_current_admin)]
+
+@tool
+def refund_booking(db : Session, booking : Bookings):
+    wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
+    payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
+    event = db.query(Events).filter(Events.id == booking.event_id).first()
+    host = db.query(Hosts).filter(Hosts.id == event.host_id).first() if event else None
+    host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first() if host else None
+    if wallet and payment:
+        wallet.balance += payment.amount
+        db.delete(payment)
+    if host and host_wallet:
+        host_wallet.balance -= payment.amount
+    if event:
+        event.available_seats += booking.ticket_count
+    db.delete(booking)
+
+# CREATE ADMIN
+@tool
+async def create_admin(db: db_dependency,email: str = Body(...),setup_key: str = Body(...)):
+    from main import ADMIN_SETUP_KEY
+    if setup_key != ADMIN_SETUP_KEY:
+        raise HTTPException(403, "Invalid setup key")
+    user = db.query(Users).filter(Users.email == email).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    user.role = "admin"
+    db.commit()
+    return {"message": f"{email} promoted to admin"}
+
+# VIEW USERS
+@tool
+async def get_all_users(admin: admin_dependency, db: db_dependency):
+    users = db.query(Users).filter(Users.role == "user").all()
+
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role
+        }
+        for u in users
+    ]
+
+# VIEW HOSTS
+@tool
+async def get_all_hosts(admin: admin_dependency, db: db_dependency):
+    hosts = db.query(Hosts).all()
+
+    return [
+        {
+            "id": h.id,
+            "company_name": h.company_name,
+            "email": h.email
+        }
+        for h in hosts
+    ]
+
+# DELETE EVENT 
+@tool
+async def delete_event(event_id: int, admin: admin_dependency, db: db_dependency):
+
+    event = db.query(Events).filter(Events.id == event_id).first()
+
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
+
+    for booking in bookings:
+        refund_booking(db, booking)
+
+    db.delete(event)
+    db.commit()
+
+    return {"message": "Event deleted and refunds processed"}
+
+# DELETE BOOKING
+@tool
+async def delete_booking(booking_id: int, admin: admin_dependency, db: db_dependency):
+    booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
+    if not booking:
+        raise HTTPException(404, "Booking not found")
+
+    refund_booking(db, booking)
+    db.commit()
+
+    return {"message": "Booking deleted & refunded"}
+
+# DEMOTE HOST 
+@tool   
+async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
+    host = db.query(Hosts).filter(Hosts.id == host_id).first()
+    if not host:
+        raise HTTPException(404, "Host not found")
+    
+    try:
+        host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
+
+        events = db.query(Events).filter(Events.host_id == host.id).all()
+
+        for event in events:
+            # Delete document file if it exists
+            if event.document_path:
+                file_path = os.path.join("uploads", event.document_path)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ Deleted document: {file_path}")
+            
+            # Also remove from vector store (you'll need to implement this)
+            # You can add a function in RAG.py to delete event documents
+            
+            bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
+            for booking in bookings:
+                payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
+                user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
+
+                if payment and user_wallet:
+                    user_wallet.balance += payment.amount
+                    db.delete(payment)
+
+                db.delete(booking)
+            db.delete(event)
+
+        if host.user_id and host_wallet:
+            promotions = db.query(HostPromotions).filter(HostPromotions.user_id == host.user_id).all()
+            for promo in promotions:
+                if promo.amount and promo.amount > 0:
+                    host_wallet.balance += promo.amount
+                db.delete(promo)
+
+        if host_wallet:
+            host_payments = db.query(HostingPayments).filter(HostingPayments.host_id == host.id).all()
+            for hp in host_payments:
+                if hp.amount and hp.amount > 0:
+                    host_wallet.balance += hp.amount
+                db.delete(hp)
+
+        if host.user_id:
+            user = db.query(Users).filter(Users.id == host.user_id).first()
+            if user:
+                user.role = "user"
+
+        if host_wallet and host.user_id:
+            user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == host.user_id).first()
+            if user_wallet:
+                user_wallet.balance += host_wallet.balance
+                db.delete(host_wallet)
+            else:
+                host_wallet.owner_type = "user"
+                host_wallet.owner_id = host.user_id
+                
+        db.delete(host)
+        db.commit()
+
+        return {"message": "Host demoted successfully with full refunds and documents cleaned up"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to demote host: {str(e)}")
+
+# VIEW ALL EVENTS
+@tool
+async def get_all_events(admin: admin_dependency, db: db_dependency):
+    events = db.query(Events).all()
+    result = []
+
+    for event in events:
+        host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
+
+        result.append({
+            "event_id": event.id,
+            "host_id": event.host_id,
+            "title": event.title,
+            "venue": event.venue,
+            "date": str(event.date),
+            "total_seats": event.seats,
+            "available_seats": event.available_seats,
+            "ticket_price": event.ticket_price,
+            "host_company": host.company_name if host else None,
+            "host_email": host.email if host else None,
+            "more_details": f"/uploads/{os.path.basename(event.document_path)}"
+                if event.document_path else None
+        })
+
+    return result
+
+# VIEW BOOKINGS
+@tool
+async def get_all_bookings(admin: admin_dependency, db: db_dependency):
+    bookings = db.query(Bookings).all()
+    result = []
+    for booking in bookings:
+        user = db.query(Users).filter(Users.id == booking.user_id).first()
+        event = db.query(Events).filter(Events.id == booking.event_id).first()
+        payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
+
+        result.append({
+            "booking_id": booking.id,
+            "user_username": user.username if user else None,
+            "user_email": user.email if user else None,
+            "event_title": event.title if event else None,
+            "event_id": booking.event_id,
+            "ticket_count": booking.ticket_count,
+            "payment_amount": payment.amount if payment else None,
+            "payment_status": payment.status if payment else None
+        })
+
+    return result
+
+@tool
+async def get_all_wallets(admin: admin_dependency, db: db_dependency):
+    wallets = db.query(Wallets).all()
+    result = []
+    for wallet in wallets:
+        if wallet.owner_type == "user":
+            user = db.query(Users).filter(Users.id == wallet.owner_id).first()
+            result.append({
+                "owner_type": "user",
+                "owner_id": wallet.owner_id,
+                "username": user.username if user else None,
+                "email": user.email if user else None,
+                "balance": wallet.balance
+            })
+        elif wallet.owner_type == "host":
+            host = db.query(Hosts).filter(Hosts.id == wallet.owner_id).first()
+            result.append({
+                "owner_type": "host",
+                "owner_id": wallet.owner_id,
+                "company_name": host.company_name if host else None,
+                "email": host.email if host else None,
+                "balance": wallet.balance
+            })
+    
+    return result
+
+@tool
+async def get_all_promotions(admin: admin_dependency, db: db_dependency):
+    promotions = db.query(HostPromotions).all()
+    result = []
+    for promotion in promotions:
+        host = db.query(Hosts).filter(Hosts.id == promotion.user_id).first()
+        result.append({
+            "user_id" : promotion.user_id,
+            "company_name" : host.company_name if host else None,
+            "email" : host.email if host else None,
+            "amount" : promotion.amount,
+            "status" : promotion.status
+        })
+    return result
+
+@tool
+async def get_all_booking_transactions(admin: admin_dependency, db: db_dependency):
+    transactions = db.query(BookingPayments).all()
+    result = []
+
+    for transaction in transactions:
+        booking = db.query(Bookings).filter(Bookings.id == transaction.booking_id).first()
+        user = db.query(Users).filter(Users.id == booking.user_id).first() if booking else None
+
+        result.append({
+            "booking_id": transaction.booking_id,
+            "user_id": booking.user_id if booking else None,
+            "username": user.username if user else None,
+            "amount": transaction.amount,
+            "status": transaction.status
+        })
+
+    return result
+
+@tool
+async def get_all_hosting_transactions(admin: admin_dependency, db: db_dependency):
+    transactions = db.query(HostingPayments).all()
+    result = []
+    for transaction in transactions:
+        host = db.query(Hosts).filter(Hosts.id == transaction.host_id).first()
+        result.append({
+            "host_id": transaction.host_id,
+            "amount": transaction.amount,
+            "company_name": host.company_name if host else None,
+            "status": transaction.status
+        })
+
+    return result
+
+
+admin_toolkit = [
+    get_current_admin,
+    get_all_users,
+    get_all_hosts,
+    delete_event,
+    delete_booking,
+    demote_host,
+    get_all_events,
+    get_all_bookings,
+    get_all_wallets,
+    get_all_promotions,
+    get_all_booking_transactions,
+    get_all_hosting_transactions
+]
