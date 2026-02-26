@@ -8,10 +8,11 @@ class ChatThread(Base):
     __tablename__ = "chat_threads"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, server_default = func.now())
+    owner_id = Column(Integer, nullable=False)  # Can be user_id or host_id
+    owner_type = Column(String(20), nullable=False)  # 'user', 'host', or 'admin'
+    created_at = Column(DateTime, server_default=func.now())
 
-    messages = relationship("ChatMessage", back_populates = "thread", cascade = "all, delete")
+    messages = relationship("ChatMessage", back_populates="thread", cascade="all, delete")
 
 
 class ChatMessage(Base):
@@ -21,7 +22,7 @@ class ChatMessage(Base):
     thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable=False)
     role = Column(String(20))  # user / assistant
     content = Column(Text)
-    created_at = Column(DateTime, server_default = func.now())
+    created_at = Column(DateTime, server_default=func.now())
 
     thread = relationship("ChatThread", back_populates="messages")
     

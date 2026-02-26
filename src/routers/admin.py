@@ -142,13 +142,23 @@ async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
     host = db.query(Hosts).filter(Hosts.id == host_id).first()
     if not host:
         raise HTTPException(404, "Host not found")
+    
     try:
         host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-
 
         events = db.query(Events).filter(Events.host_id == host.id).all()
 
         for event in events:
+            # Delete document file if it exists
+            if event.document_path:
+                file_path = os.path.join("uploads", event.document_path)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ Deleted document: {file_path}")
+            
+            # Also remove from vector store (you'll need to implement this)
+            # You can add a function in RAG.py to delete event documents
+            
             bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
             for booking in bookings:
                 payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
@@ -188,10 +198,11 @@ async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
             else:
                 host_wallet.owner_type = "user"
                 host_wallet.owner_id = host.user_id
+                
         db.delete(host)
         db.commit()
 
-        return {"message": "Host demoted successfully with full refunds"}
+        return {"message": "Host demoted successfully with full refunds and documents cleaned up"}
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Failed to demote host: {str(e)}")

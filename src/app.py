@@ -6,6 +6,96 @@ BASE_URL = "http://localhost:8000"
 
 st.set_page_config(page_title="Event Booking Platform", layout="wide")
 
+# Add to your user/host/admin dashboard functions
+
+def chat_interface():
+    """Chat interface component"""
+    st.header("💬 Chat with AI Assistant")
+    
+    # Initialize session state for chat
+    if "current_thread_id" not in st.session_state:
+        st.session_state.current_thread_id = None
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    # Sidebar for thread management
+    with st.sidebar:
+        st.subheader("Chat History")
+        
+        # New chat button
+        if st.button("➕ New Chat", use_container_width=True):
+            st.session_state.current_thread_id = None
+            st.session_state.messages = []
+            st.rerun()
+        
+        st.divider()
+        
+        # Fetch user's threads
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        threads_res = requests.get(f"{BASE_URL}/chat/threads", headers=headers)
+        
+        if threads_res.status_code == 200:
+            threads = threads_res.json()
+            for thread in threads:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    # Truncate long messages
+                    preview = (thread['last_message'] or "Empty chat")[:30] + "..." if thread.get('last_message') and len(thread['last_message']) > 30 else (thread['last_message'] or "Empty chat")
+                    if st.button(f"📝 {preview}", key=f"thread_{thread['id']}", use_container_width=True):
+                        st.session_state.current_thread_id = thread['id']
+                        # Load messages for this thread
+                        msgs_res = requests.get(f"{BASE_URL}/chat/threads/{thread['id']}/messages", headers=headers)
+                        if msgs_res.status_code == 200:
+                            st.session_state.messages = msgs_res.json()
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️", key=f"del_{thread['id']}"):
+                        requests.delete(f"{BASE_URL}/chat/threads/{thread['id']}", headers=headers)
+                        if st.session_state.current_thread_id == thread['id']:
+                            st.session_state.current_thread_id = None
+                            st.session_state.messages = []
+                        st.rerun()
+    
+    # Display chat messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    
+    # Chat input
+    if prompt := st.chat_input("Ask me about events..."):
+        # Add user message to UI
+        with st.chat_message("user"):
+            st.write(prompt)
+        
+        # Add to session state
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Send to API
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        response = requests.post(
+            f"{BASE_URL}/chat/ask",
+            headers=headers,
+            json={
+                "message": prompt,
+                "thread_id": st.session_state.current_thread_id
+            }
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Update thread ID for subsequent messages
+            st.session_state.current_thread_id = data["thread_id"]
+            
+            # Add assistant response to UI
+            with st.chat_message("assistant"):
+                st.write(data["response"])
+            
+            # Add to session state
+            st.session_state.messages.append({"role": "assistant", "content": data["response"]})
+        else:
+            st.error("Failed to get response from assistant")
+            
 # ---------------- SESSION ----------------
 if "token" not in st.session_state:
     st.session_state.token = None
@@ -164,7 +254,7 @@ if not st.session_state.token:
 role = st.session_state.role
 
 # ---------------- HEADER ----------------
-col1, col2, col3 = st.columns([6, 1, 1])
+col1, col2 = st.columns([6, 1])
 
 with col1:
     st.title(f"Dashboard — {role.upper()}")
@@ -172,42 +262,42 @@ with col1:
 with col2:
     profile_menu()
 
-with col3:
-    with st.popover("💬 Chat"):
+# with col3:
+#     with st.popover("💬 Chat"):
 
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
+#         if "chat_history" not in st.session_state:
+#             st.session_state.chat_history = []
 
-        # Display chat messages
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+#         # Display chat messages
+#         for msg in st.session_state.chat_history:
+#             with st.chat_message(msg["role"]):
+#                 st.write(msg["content"])
 
-        # Chat input
-        user_input = st.chat_input("Ask about events...")
+#         # Chat input
+#         user_input = st.chat_input("Ask about events...")
 
-        if user_input:
-            st.session_state.chat_history.append(
-                {"role": "user", "content": user_input}
-            )
+#         if user_input:
+#             st.session_state.chat_history.append(
+#                 {"role": "user", "content": user_input}
+#             )
 
-            with st.spinner("Thinking..."):
-                res = requests.post(
-                    f"{BASE_URL}/chat/ask",
-                    headers=headers() if st.session_state.token else {},
-                    json={"question": user_input}
-                )
+#             with st.spinner("Thinking..."):
+#                 res = requests.post(
+#                     f"{BASE_URL}/chat/ask",
+#                     headers=headers() if st.session_state.token else {},
+#                     json={"question": user_input}
+#                 )
 
-                if res.status_code == 200:
-                    answer = res.json().get("answer", "No response.")
-                else:
-                    answer = "Error contacting AI."
+#                 if res.status_code == 200:
+#                     answer = res.json().get("answer", "No response.")
+#                 else:
+#                     answer = "Error contacting AI."
 
-            st.session_state.chat_history.append(
-                {"role": "assistant", "content": answer}
-            )
+#             st.session_state.chat_history.append(
+#                 {"role": "assistant", "content": answer}
+#             )
 
-            st.rerun()
+#             st.rerun()
 
 
 # =================================================
@@ -216,9 +306,12 @@ with col3:
 def user_dashboard():
 
     menu = smart_tabs(
-        ["Wallet", "Browse Events", "My Bookings", "Promote To Host"],
+        ["Wallet", "Browse Events", "My Bookings", "Promote To Host", "AI ChatBot"],
         key="user_tab"
     )
+
+    if menu == "AI ChatBot":
+        chat_interface()
 
     if menu == "Wallet":
         wallet_ui()
@@ -313,10 +406,12 @@ def user_dashboard():
 def host_dashboard():
 
     menu = smart_tabs(
-        ["Wallet", "Create Event", "My Events"],
+        ["Wallet", "Create Event", "My Events", "AI ChatBot"],
         key="host_tab"
     )
 
+    if menu == "AI ChatBot":
+        chat_interface()
     # ---------------- WALLET ----------------
     if menu == "Wallet":
         wallet_ui()
@@ -523,10 +618,11 @@ def admin_dashboard():
     headers_auth = headers()
 
     tab = smart_tabs(
-        ["Users", "Hosts", "Transactions", "Promotions", "Wallets"],
+        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "AI Chatbot"],
         key="admin_tab"
     )
-
+    if tab == "AI Chatbot":
+        chat_interface()
     # ================= USERS =================
     if tab == "Users":
 

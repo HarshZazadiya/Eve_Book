@@ -21,6 +21,11 @@ from model import Users
 from routers.auth import bcrypt_context
 from fastapi.staticfiles import StaticFiles
 from AI import chatbot
+from AI.RAG import get_vector_store
+import atexit
+import signal
+import sys
+from contextlib import asynccontextmanager
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
 
@@ -56,7 +61,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan = lifespan)
 
 app.mount("/uploads", StaticFiles(directory = "uploads"), name = "uploads")
-    
+
+print="🚀 Initializing FAISS index on startup..."
+get_vector_store() 
+print="✅ FAISS ready!"
+
 Base.metadata.create_all(bind=engine)
 
 app.include_router(auth.router)
@@ -131,3 +140,38 @@ async def get_my_wallet(db: db_dependency, token: Annotated[str, Depends(oauth2_
         }
     data = {"balance" : float(wallet.balance)}
     return data
+
+
+# Add cleanup function
+def cleanup():
+    print("\n🧹 Cleaning up...")
+    try:
+        from AI.RAG import cleanup_vector_store
+        cleanup_vector_store()
+    except:
+        pass
+
+# Register cleanup
+atexit.register(cleanup)
+
+# Handle signals
+def signal_handler(sig, frame):
+    print(f"\nReceived signal {sig}")
+    cleanup()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Update your lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print="🚀 Starting up..."
+    from AI.RAG import get_vector_store
+    store = get_vector_store()
+    print=f"✅ FAISS ready with {store.index.ntotal} vectors"
+    yield
+    # Shutdown
+    print="🛑 Shutting down..."
+    cleanup()
