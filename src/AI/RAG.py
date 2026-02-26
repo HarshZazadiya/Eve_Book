@@ -1,4 +1,3 @@
-# AI/RAG.py
 import os
 import shutil
 from pathlib import Path
@@ -202,8 +201,6 @@ def delete_event_documents(event_id: int) -> bool:
         
         store = get_vector_store()
         
-        # FAISS doesn't support direct deletion, so we need to rebuild without this event
-        # Get all documents except those from this event
         all_docs = store.docstore._dict.values()
         
         # Filter out docs from this event

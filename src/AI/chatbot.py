@@ -57,8 +57,8 @@ def get_user_from_token(token: str, db: Session):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("id")
-        user_type = payload.get("type")  # 'user' or 'host'
-        role = payload.get("role")  # 'user', 'host', 'admin'
+        user_type = payload.get("type") 
+        role = payload.get("role") 
         
         # Determine the correct owner_type
         if role == "admin":
@@ -78,7 +78,7 @@ def get_user_from_token(token: str, db: Session):
             "id": user_id,
             "type": user_type,
             "role": role,
-            "owner_type": owner_type,  # This is what we'll use for chat_threads
+            "owner_type": owner_type, 
             "name": name,
         }
         
@@ -100,19 +100,11 @@ def get_or_create_thread(db: Session, user_info: dict, thread_id: Optional[int] 
     user_info contains: id, type, role, owner_type, name
     """
     if thread_id:
-        # Verify thread belongs to this user (check by owner_id only)
-        thread = db.query(ChatThread).filter(
-            ChatThread.id == thread_id,
-            ChatThread.owner_id == user_info["id"]
-        ).first()
+        thread = db.query(ChatThread).filter(ChatThread.id == thread_id, ChatThread.owner_id == user_info["id"]).first()
         if thread:
             return thread
     
-    # Create new thread with correct owner_type (admin for admin users)
-    thread = ChatThread(
-        owner_id=user_info["id"],
-        owner_type=user_info["owner_type"]  # This will be 'user', 'host', or 'admin'
-    )
+    thread = ChatThread(owner_id=user_info["id"], owner_type=user_info["owner_type"])
     db.add(thread)
     db.commit()
     db.refresh(thread)
