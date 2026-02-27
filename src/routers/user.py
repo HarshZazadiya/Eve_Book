@@ -1,4 +1,3 @@
-# routers/user.py
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Annotated
 from sqlalchemy.orm import Session

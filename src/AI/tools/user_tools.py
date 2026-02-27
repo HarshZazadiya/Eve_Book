@@ -1,4 +1,3 @@
-# AI/tools/user_tools.py
 from langchain_core.tools import tool
 import json
 from database import SessionLocal
