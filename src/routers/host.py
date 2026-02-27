@@ -1,49 +1,37 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
 from typing import Annotated
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from routers.auth import authenticate_host, create_access_token, get_current_host
-from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
-import redis.asyncio as redis
-import json
+from model import Hosts
 import os
 import shutil
-from datetime import date, datetime
-from pathlib import Path
-from AI.RAG import process_event_document, delete_event_documents
+from datetime import datetime
+from pydantic import BaseModel
 
-# --------------------------------------------------
-# Router Setup
-# --------------------------------------------------
+class PaymentRequest(BaseModel):
+    amount: int
+
+# Import AI tools
+from AI.tools.host_tools import (
+    get_host_info,
+    get_host_events,
+    create_host_event,
+    delete_host_event,
+    update_host_event,
+    update_event_document,
+    host_tools
+)
 
 router = APIRouter(prefix="/host", tags=["Host"])
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-REDIS_URL = os.getenv("REDIS_URL")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
-
-
-# --------------------------------------------------
-# Schemas
-# --------------------------------------------------
-
-class EventRequest(BaseModel):
-    title: str
-    venue: str
-    date: date
-    seats: int
-    ticket_price: int
-
-class PaymentRequest(BaseModel):
-    amount : int
 # --------------------------------------------------
 # Dependencies
 # --------------------------------------------------
-
 def get_db():
     db = SessionLocal()
     try:
@@ -54,389 +42,197 @@ def get_db():
 db_dependency = Annotated[Session, Depends(get_db)]
 host_dependency = Annotated[Hosts, Depends(get_current_host)]
 
-
+class PaymentRequest(BaseModel):
+    amount : int
 # --------------------------------------------------
 # HOST INFO
 # --------------------------------------------------
-
 @router.get("/")
 async def get_info(host: host_dependency):
-
-    cache_key = f"host:{host.id}"
-
-    if redis_client:
-        cached = await redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
-    data = {
-        "id": host.id,
-        "company_name": host.company_name,
-        "email": host.email
-    }
-
-    if redis_client:
-        await redis_client.set(cache_key, json.dumps(data), ex=300)
-
-    return data
-
+    """Get host information"""
+    result = get_host_info.invoke({
+        "host_id": host.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    
+    return result
 
 # --------------------------------------------------
 # GET HOST EVENTS
 # --------------------------------------------------
-
 @router.get("/events")
-async def get_events(host: host_dependency, db: db_dependency):
-
-    cache_key = f"host_events:{host.id}"
-
-    if redis_client:
-        cached = await redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
-    events = db.query(Events).filter(Events.host_id == host.id).all()
-
-    result = []
-    for e in events:
-        result.append({
-            "id" : e.id,
-            "title" : e.title,
-            "venue" : e.venue,
-            "date" : str(e.date),
-            "seats" : e.seats,
-            "available_seats" : e.available_seats,
-            "ticket_price" : e.ticket_price,
-            "more_details" : f"/uploads/{e.document_path}" if e.document_path else None
-        })
-
-    if redis_client:
-        await redis_client.set(cache_key, json.dumps(result), ex=10)
-
+async def get_events(host: host_dependency):
+    """Get all events created by this host"""
+    result = get_host_events.invoke({
+        "host_id": host.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    
     return result
-
 
 # --------------------------------------------------
 # CREATE EVENT
 # --------------------------------------------------
-
 @router.post("/event")
-async def host_event(
-    host : host_dependency,
-    db : db_dependency,
-    title : str = Form(...),
-    venue : str = Form(...),
-    date : str = Form(...),
-    seats : int = Form(...),
-    ticket_price : int = Form(...),
-    document : UploadFile = File(None)
+async def create_event(
+    host: host_dependency,
+    title: str = Form(...),
+    venue: str = Form(...),
+    date: str = Form(...),
+    seats: int = Form(...),
+    ticket_price: int = Form(...),
+    document: UploadFile = File(None)
 ):
-
-    HOSTING_FEE = 500
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-    if not wallet or wallet.balance < HOSTING_FEE:
-        raise HTTPException(403, "Insufficient wallet balance")
-    wallet.balance -= HOSTING_FEE
-    payment = HostingPayments(
-        host_id = host.id,
-        amount = HOSTING_FEE,
-        status = "success"
-    )
-    db.add(payment)
-
-    event = Events(
-        title = title,
-        venue = venue,
-        date = datetime.strptime(date, "%Y-%m-%d").date(),
-        seats = seats,
-        available_seats = seats,
-        host_id = host.id,
-        ticket_price = ticket_price
-    )
-
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-
-    event_host = db.query(Hosts).filter(Hosts.id == host.id).first()
-
-    # -------- File Handling --------
-
-    safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
-    filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-
+    """Create a new event"""
+    
+    # Handle document upload if provided
+    document_path = None
     if document:
         if document.content_type != "application/pdf":
             raise HTTPException(400, "Only PDF files are allowed")
-
-        with open(file_path, "wb") as buffer:
+        
+        # Save temporarily
+        temp_path = os.path.join(UPLOAD_DIR, f"temp_{document.filename}")
+        with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(document.file, buffer)
-    else:
-        from reportlab.pdfgen import canvas
-
-        c = canvas.Canvas(file_path)
-        c.drawString(100, 800, f"Host : {event_host.company_name}")
-        c.drawString(100, 780, f"Event : {title}")
-        c.drawString(100, 760, f"Venue : {venue}")
-        c.drawString(100, 740, f"Date : {date}")
-        c.drawString(100, 720, f"Seats : {seats}")
-        c.drawString(100, 700, f"Price : {ticket_price} INR")
-        c.save()
-
-    event.document_path = filename
-    db.commit()
-
-   # After saving the document, add this:
-    if document:
-        # Process the uploaded PDF for RAG
-        process_event_document(event.id, file_path)
-    else:
-        # Process the generated default PDF
-        process_event_document(event.id, file_path)
-
-    # In the host_event function, after process_event_document:
-    if document:
-        process_event_document(event.id, file_path)
-        event.document_processed = True  # Add this line
-        db.commit()
-    else:
-        process_event_document(event.id, file_path)
-        event.document_processed = True  # Add this line
-        db.commit()
-    if redis_client:
-        await redis_client.delete(f"host_events : {host.id}")
+        document_path = temp_path
     
-    return {"event_id" : event.id, "message" : "Event created successfully"}
-
+    # Call the tool
+    result = create_host_event.invoke({
+        "host_id": host.id,
+        "title": title,
+        "venue": venue,
+        "date": date,
+        "seats": seats,
+        "ticket_price": ticket_price,
+        "document_path": document_path
+    })
+    
+    # Clean up temp file
+    if document_path and os.path.exists(document_path):
+        os.remove(document_path)
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    return result
 
 # --------------------------------------------------
-# DELETE EVENT (WITH FULL REFUNDS)
+# DELETE EVENT
 # --------------------------------------------------
 @router.delete("/event/{event_id}")
-async def delete_event(host: host_dependency, db: db_dependency, event_id: int):
-    HOSTING_FEE = 500
-
-    event = db.query(Events).filter(Events.id == event_id, Events.host_id == host.id).first()
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    # Delete from vector store FIRST
-    from AI.RAG import delete_event_documents
-    delete_event_documents(event_id)
-
-    bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
-
-    for booking in bookings:
-        payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-        user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
-        host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-
-        if payment and user_wallet:
-            user_wallet.balance += payment.amount
-            if host_wallet:
-                host_wallet.balance -= payment.amount
-            db.delete(payment)
-
-        db.delete(booking)
-
-    # Refund hosting fee
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-    if wallet:
-        wallet.balance += HOSTING_FEE
-
-    # Delete document file
-    if event.document_path:
-        file_path = os.path.join(UPLOAD_DIR, event.document_path)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    db.delete(event)
-    db.commit()
-
-    if redis_client:
-        await redis_client.delete(f"host_events : {host.id}")
-
-    return {"message": "Event deleted successfully with refunds"}
-
+async def delete_event(host: host_dependency, event_id: int):
+    """Delete an event and process refunds"""
+    result = delete_host_event.invoke({
+        "host_id": host.id,
+        "event_id": event_id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    
+    return result
 
 # --------------------------------------------------
 # UPDATE EVENT
 # --------------------------------------------------
-# routers/host.py - Fixed update_event function
-
 @router.put("/event/{event_id}")
 async def update_event(
-    event_id: int, 
-    host: host_dependency, 
-    db: db_dependency, 
-    event_request: EventRequest
+    event_id: int,
+    host: host_dependency,
+    title: str = Form(...),
+    venue: str = Form(...),
+    date: str = Form(...),
+    seats: int = Form(...),
+    ticket_price: int = Form(...)
 ):
-    event = db.query(Events).filter(
-        Events.id == event_id, 
-        Events.host_id == host.id
-    ).first()
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    # Store old values to check what changed
-    old_title = event.title
-    old_venue = event.venue
-    old_date = event.date
+    """Update event details"""
+    result = update_host_event.invoke({
+        "host_id": host.id,
+        "event_id": event_id,
+        "title": title,
+        "venue": venue,
+        "date": date,
+        "seats": seats,
+        "ticket_price": ticket_price
+    })
     
-    # Update fields
-    diff = event_request.seats - event.seats
-    event.title = event_request.title
-    event.venue = event_request.venue
-    event.date = event_request.date
-    event.seats = event_request.seats
-    event.available_seats += diff
-    event.ticket_price = event_request.ticket_price
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
     
-    db.commit()
-    
-    # Check if any important details changed that should be reflected in the document
-    details_changed = (
-        old_title != event.title or
-        old_venue != event.venue or
-        old_date != event.date or
-        event_request.ticket_price != event.ticket_price
-    )
-    
-    # Handle document update
-    if details_changed:
-        print(f"📝 Event details changed, updating document for event {event_id}")
-        
-        # Delete old document from vector store FIRST
-        try:
-            from AI.RAG import delete_event_documents
-            delete_event_documents(event_id)
-            print(f"✅ Removed old event {event_id} from vector store")
-        except Exception as e:
-            print(f"⚠️ Error removing from vector store: {e}")
-        
-        # Generate new PDF with updated details
-        from reportlab.pdfgen import canvas
-        
-        # Delete old PDF file if exists
-        if event.document_path:
-            old_path = os.path.join("uploads", event.document_path)
-            if os.path.exists(old_path):
-                os.remove(old_path)
-                print(f"🗑️ Deleted old PDF: {old_path}")
-        
-        # Generate new PDF filename
-        safe_title = event.title.replace(" ", "_").replace("/", "").replace("\\", "")
-        filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-        file_path = os.path.join("uploads", filename)
-        
-        # Create new PDF with updated details
-        c = canvas.Canvas(file_path)
-        c.drawString(100, 800, f"Event: {event.title}")
-        c.drawString(100, 780, f"Venue: {event.venue}")
-        c.drawString(100, 760, f"Date: {event.date}")
-        c.drawString(100, 740, f"Seats: {event.seats}")
-        c.drawString(100, 720, f"Price: {event.ticket_price} INR")
-        c.drawString(100, 700, f"Host: {host.company_name}")
-        c.save()
-        
-        # Update database with new filename
-        event.document_path = filename
-        db.commit()
-        
-        # Add to vector store
-        try:
-            from AI.RAG import process_event_document
-            process_event_document(event.id, file_path)
-            print(f"✅ Added updated event {event_id} to vector store")
-        except Exception as e:
-            print(f"⚠️ Error adding to vector store: {e}")
-    
-    return {"message": "Event updated successfully"}
-
+    return result
 
 # --------------------------------------------------
 # UPDATE EVENT DOCUMENT
 # --------------------------------------------------
-
-# routers/host.py - Add this new endpoint for updating just the document
-
 @router.put("/event_document/{event_id}")
-async def update_event_document(
+async def update_document(
     event_id: int,
     host: host_dependency,
-    db: db_dependency,
     document: UploadFile = File(...)
 ):
-    """Update ONLY the document for an event (keep event details same)"""
-    
-    event = db.query(Events).filter(
-        Events.id == event_id,
-        Events.host_id == host.id
-    ).first()
-    
-    if not event:
-        raise HTTPException(404, "Event not found")
+    """Update just the document for an event"""
     
     # Validate file type
     if document.content_type != "application/pdf":
         raise HTTPException(400, "Only PDF files allowed")
     
-    # Delete old document from vector store
-    try:
-        from AI.RAG import delete_event_documents
-        delete_event_documents(event_id)
-        print(f"✅ Removed old event {event_id} from vector store")
-    except Exception as e:
-        print(f"⚠️ Error removing from vector store: {e}")
-    
-    # Delete old PDF file
-    if event.document_path:
-        old_path = os.path.join("uploads", event.document_path)
-        if os.path.exists(old_path):
-            os.remove(old_path)
-            print(f"🗑️ Deleted old PDF: {old_path}")
-    
-    # Save new PDF
-    safe_title = event.title.replace(" ", "_").replace("/", "").replace("\\", "")
-    filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-    file_path = os.path.join("uploads", filename)
-    
-    # Save uploaded file
-    with open(file_path, "wb") as buffer:
+    # Save temporarily
+    temp_path = os.path.join(UPLOAD_DIR, f"temp_doc_{document.filename}")
+    with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(document.file, buffer)
     
-    # Update database
-    event.document_path = filename
-    db.commit()
-    
-    # Add to vector store
     try:
-        from AI.RAG import process_event_document
-        process_event_document(event.id, file_path)
-        print(f"✅ Added new document for event {event_id} to vector store")
-    except Exception as e:
-        print(f"⚠️ Error adding to vector store: {e}")
-    
-    return {"message": "Document updated successfully"}
+        # Call the tool
+        result = update_event_document.invoke({
+            "host_id": host.id,
+            "event_id": event_id,
+            "pdf_path": temp_path
+        })
+        
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        
+        return result
+        
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 # --------------------------------------------------
 # LOGIN
 # --------------------------------------------------
-
 @router.post("/token")
-async def login(form_data : OAuth2PasswordRequestForm = Depends(), db : Session = Depends(get_db)):
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    """Host login endpoint"""
     host = authenticate_host(form_data.username, form_data.password, db)
     if not host:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(
-        entity_id = host.id,
-        entity_type = "host",
-        role = "host"
+        entity_id=host.id,
+        entity_type="host",
+        role="host"
     )
 
     return {
-        "access_token" : access_token,
-        "token_type" : "bearer",
-        "type" : "host"
+        "access_token": access_token,
+        "token_type": "bearer",
+        "type": "host"
     }
+
+# --------------------------------------------------
+# TOOLKIT ENDPOINT (for agent)
+# --------------------------------------------------
+@router.get("/tools")
+async def get_tools():
+    """Return list of available host tools"""
+    return [tool.name for tool in host_tools]

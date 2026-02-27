@@ -1,426 +1,481 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Form
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
-from typing import Annotated
+# AI/tools/host_tools.py
+from langchain_core.tools import tool
+import os
+import json
+import shutil
+from datetime import datetime
+from pathlib import Path
+import redis.asyncio as redis
+from typing import Optional
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from routers.auth import authenticate_host, create_access_token, get_current_host
 from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
-import redis.asyncio as redis
-import json
-import os
-import shutil
-from datetime import date, datetime
-from pathlib import Path
 from AI.RAG import process_event_document, delete_event_documents
-from langchain_core.tools import tool
-# --------------------------------------------------
-# Router Setup
-# --------------------------------------------------
 
+# --------------------------------------------------
+# Configuration
+# --------------------------------------------------
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 REDIS_URL = os.getenv("REDIS_URL")
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
-
 # --------------------------------------------------
-# Schemas
+# Helper Functions
 # --------------------------------------------------
-
-class EventRequest(BaseModel):
-    title: str
-    venue: str
-    date: date
-    seats: int
-    ticket_price: int
-
-class PaymentRequest(BaseModel):
-    amount : int
-# --------------------------------------------------
-# Dependencies
-# --------------------------------------------------
-
-def get_db():
+def get_host_by_id(host_id: int):
+    """Get host by ID"""
     db = SessionLocal()
     try:
-        yield db
+        return db.query(Hosts).filter(Hosts.id == host_id).first()
     finally:
         db.close()
 
-db_dependency = Annotated[Session, Depends(get_db)]
-host_dependency = Annotated[Hosts, Depends(get_current_host)]
+def get_host_wallet(host_id: int):
+    """Get host wallet"""
+    db = SessionLocal()
+    try:
+        return db.query(Wallets).filter(
+            Wallets.owner_type == "host", 
+            Wallets.owner_id == host_id
+        ).first()
+    finally:
+        db.close()
 
-
-# --------------------------------------------------
-# HOST INFO
-# --------------------------------------------------
-@tool
-async def get_info(host: host_dependency):
-
-    cache_key = f"host:{host.id}"
-
-    if redis_client:
-        cached = await redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
-    data = {
-        "id": host.id,
-        "company_name": host.company_name,
-        "email": host.email
-    }
-
-    if redis_client:
-        await redis_client.set(cache_key, json.dumps(data), ex=300)
-
-    return data
-
-
-# --------------------------------------------------
-# GET HOST EVENTS
-# --------------------------------------------------
-@tool
-async def get_events(host: host_dependency, db: db_dependency):
-
-    cache_key = f"host_events:{host.id}"
-
-    if redis_client:
-        cached = await redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
-    events = db.query(Events).filter(Events.host_id == host.id).all()
-
-    result = []
-    for e in events:
-        result.append({
-            "id" : e.id,
-            "title" : e.title,
-            "venue" : e.venue,
-            "date" : str(e.date),
-            "seats" : e.seats,
-            "available_seats" : e.available_seats,
-            "ticket_price" : e.ticket_price,
-            "more_details" : f"/uploads/{e.document_path}" if e.document_path else None
-        })
-
-    if redis_client:
-        await redis_client.set(cache_key, json.dumps(result), ex=10)
-
-    return result
-
-
-# --------------------------------------------------
-# CREATE EVENT
-# --------------------------------------------------
-@tool
-async def host_event(
-    host : host_dependency,
-    db : db_dependency,
-    title : str = Form(...),
-    venue : str = Form(...),
-    date : str = Form(...),
-    seats : int = Form(...),
-    ticket_price : int = Form(...),
-    document : UploadFile = File(None)
-):
-
-    HOSTING_FEE = 500
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-    if not wallet or wallet.balance < HOSTING_FEE:
-        raise HTTPException(403, "Insufficient wallet balance")
-    wallet.balance -= HOSTING_FEE
-    payment = HostingPayments(
-        host_id = host.id,
-        amount = HOSTING_FEE,
-        status = "success"
-    )
-    db.add(payment)
-
-    event = Events(
-        title = title,
-        venue = venue,
-        date = datetime.strptime(date, "%Y-%m-%d").date(),
-        seats = seats,
-        available_seats = seats,
-        host_id = host.id,
-        ticket_price = ticket_price
-    )
-
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-
-    event_host = db.query(Hosts).filter(Hosts.id == host.id).first()
-
-    # -------- File Handling --------
-
-    safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
-    filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-
-    if document:
-        if document.content_type != "application/pdf":
-            raise HTTPException(400, "Only PDF files are allowed")
-
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(document.file, buffer)
-    else:
-        from reportlab.pdfgen import canvas
-
-        c = canvas.Canvas(file_path)
-        c.drawString(100, 800, f"Host : {event_host.company_name}")
-        c.drawString(100, 780, f"Event : {title}")
-        c.drawString(100, 760, f"Venue : {venue}")
-        c.drawString(100, 740, f"Date : {date}")
-        c.drawString(100, 720, f"Seats : {seats}")
-        c.drawString(100, 700, f"Price : {ticket_price} INR")
-        c.save()
-
-    event.document_path = filename
-    db.commit()
-
-   # After saving the document, add this:
-    if document:
-        # Process the uploaded PDF for RAG
-        process_event_document(event.id, file_path)
-    else:
-        # Process the generated default PDF
-        process_event_document(event.id, file_path)
-
-    # In the host_event function, after process_event_document:
-    if document:
-        process_event_document(event.id, file_path)
-        event.document_processed = True  # Add this line
-        db.commit()
-    else:
-        process_event_document(event.id, file_path)
-        event.document_processed = True  # Add this line
-        db.commit()
-    if redis_client:
-        await redis_client.delete(f"host_events : {host.id}")
+def refund_booking(db: Session, booking: Bookings, host_id: int):
+    """Refund a booking"""
+    payment = db.query(BookingPayments).filter(
+        BookingPayments.booking_id == booking.id
+    ).first()
     
-    return {"event_id" : event.id, "message" : "Event created successfully"}
+    user_wallet = db.query(Wallets).filter(
+        Wallets.owner_type == "user", 
+        Wallets.owner_id == booking.user_id
+    ).first()
+    
+    host_wallet = db.query(Wallets).filter(
+        Wallets.owner_type == "host", 
+        Wallets.owner_id == host_id
+    ).first()
 
+    if payment and user_wallet:
+        user_wallet.balance += payment.amount
+        if host_wallet:
+            host_wallet.balance -= payment.amount
+        db.delete(payment)
 
-# --------------------------------------------------
-# DELETE EVENT (WITH FULL REFUNDS)
-# --------------------------------------------------
-@tool
-async def delete_event(host: host_dependency, db: db_dependency, event_id: int):
-    HOSTING_FEE = 500
-
-    event = db.query(Events).filter(Events.id == event_id, Events.host_id == host.id).first()
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    # Delete from vector store FIRST
-    from AI.RAG import delete_event_documents
-    delete_event_documents(event_id)
-
-    bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
-
-    for booking in bookings:
-        payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-        user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
-        host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-
-        if payment and user_wallet:
-            user_wallet.balance += payment.amount
-            if host_wallet:
-                host_wallet.balance -= payment.amount
-            db.delete(payment)
-
-        db.delete(booking)
-
-    # Refund hosting fee
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-    if wallet:
-        wallet.balance += HOSTING_FEE
-
-    # Delete document file
-    if event.document_path:
-        file_path = os.path.join(UPLOAD_DIR, event.document_path)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-    db.delete(event)
-    db.commit()
-
-    if redis_client:
-        await redis_client.delete(f"host_events : {host.id}")
-
-    return {"message": "Event deleted successfully with refunds"}
-
+    db.delete(booking)
 
 # --------------------------------------------------
-# UPDATE EVENT
+# HOST TOOLS
 # --------------------------------------------------
 
 @tool
-async def update_event(event_id: int,  host: host_dependency,  db: db_dependency,  event_request: EventRequest):
-    event = db.query(Events).filter(Events.id == event_id,  Events.host_id == host.id).first()
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    # Store old values to check what changed
-    old_title = event.title
-    old_venue = event.venue
-    old_date = event.date
+def get_host_info(host_id: int) -> dict:
+    """
+    Get information about the current host.
+    Requires host_id.
+    """
+    cache_key = f"host:{host_id}"
     
-    # Update fields
-    diff = event_request.seats - event.seats
-    event.title = event_request.title
-    event.venue = event_request.venue
-    event.date = event_request.date
-    event.seats = event_request.seats
-    event.available_seats += diff
-    event.ticket_price = event_request.ticket_price
-    
-    db.commit()
-    
-    # Check if any important details changed that should be reflected in the document
-    details_changed = (
-        old_title != event.title or
-        old_venue != event.venue or
-        old_date != event.date or
-        event_request.ticket_price != event.ticket_price
-    )
-    
-    # Handle document update
-    if details_changed:
-        print(f"📝 Event details changed, updating document for event {event_id}")
-        
-        # Delete old document from vector store FIRST
+    # Try cache first
+    if redis_client:
+        import asyncio
         try:
-            from AI.RAG import delete_event_documents
-            delete_event_documents(event_id)
-            print(f"✅ Removed old event {event_id} from vector store")
-        except Exception as e:
-            print(f"⚠️ Error removing from vector store: {e}")
+            cached = asyncio.run(redis_client.get(cache_key))
+            if cached:
+                return json.loads(cached)
+        except:
+            pass
+    
+    db = SessionLocal()
+    try:
+        host = db.query(Hosts).filter(Hosts.id == host_id).first()
+        if not host:
+            return {"error": "Host not found"}
         
-        # Generate new PDF with updated details
-        from reportlab.pdfgen import canvas
+        data = {
+            "id": host.id,
+            "company_name": host.company_name,
+            "email": host.email
+        }
         
-        # Delete old PDF file if exists
-        if event.document_path:
-            old_path = os.path.join("uploads", event.document_path)
-            if os.path.exists(old_path):
-                os.remove(old_path)
-                print(f"🗑️ Deleted old PDF: {old_path}")
+        # Cache it
+        if redis_client:
+            try:
+                asyncio.run(redis_client.set(cache_key, json.dumps(data), ex=300))
+            except:
+                pass
         
-        # Generate new PDF filename
-        safe_title = event.title.replace(" ", "_").replace("/", "").replace("\\", "")
-        filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-        file_path = os.path.join("uploads", filename)
+        return data
+    finally:
+        db.close()
+
+
+@tool
+def get_host_events(host_id: int) -> list:
+    """
+    Get all events created by the host.
+    Requires host_id.
+    """
+    cache_key = f"host_events:{host_id}"
+    
+    # Try cache first
+    if redis_client:
+        import asyncio
+        try:
+            cached = asyncio.run(redis_client.get(cache_key))
+            if cached:
+                return json.loads(cached)
+        except:
+            pass
+    
+    db = SessionLocal()
+    try:
+        events = db.query(Events).filter(Events.host_id == host_id).all()
         
-        # Create new PDF with updated details
-        c = canvas.Canvas(file_path)
-        c.drawString(100, 800, f"Event: {event.title}")
-        c.drawString(100, 780, f"Venue: {event.venue}")
-        c.drawString(100, 760, f"Date: {event.date}")
-        c.drawString(100, 740, f"Seats: {event.seats}")
-        c.drawString(100, 720, f"Price: {event.ticket_price} INR")
-        c.drawString(100, 700, f"Host: {host.company_name}")
-        c.save()
+        result = []
+        for e in events:
+            result.append({
+                "id": e.id,
+                "title": e.title,
+                "venue": e.venue,
+                "date": str(e.date),
+                "seats": e.seats,
+                "available_seats": e.available_seats,
+                "ticket_price": e.ticket_price,
+                "more_details": f"/uploads/{e.document_path}" if e.document_path else None
+            })
         
-        # Update database with new filename
+        # Cache it
+        if redis_client:
+            try:
+                asyncio.run(redis_client.set(cache_key, json.dumps(result), ex=10))
+            except:
+                pass
+        
+        return result
+    finally:
+        db.close()
+
+
+@tool
+def create_host_event(
+    host_id: int,
+    title: str,
+    venue: str,
+    date: str,
+    seats: int,
+    ticket_price: int,
+    document_path: Optional[str] = None
+) -> dict:
+    """
+    Create a new event as a host.
+    Requires host_id, title, venue, date (YYYY-MM-DD), seats, ticket_price.
+    Optional: document_path to an existing PDF file.
+    """
+    HOSTING_FEE = 500
+    
+    db = SessionLocal()
+    try:
+        # Check wallet balance
+        wallet = db.query(Wallets).filter(
+            Wallets.owner_type == "host", 
+            Wallets.owner_id == host_id
+        ).first()
+        
+        if not wallet or wallet.balance < HOSTING_FEE:
+            return {"error": "Insufficient wallet balance (need ₹500)"}
+        
+        # Deduct fee
+        wallet.balance -= HOSTING_FEE
+        
+        # Record payment
+        payment = HostingPayments(
+            host_id=host_id,
+            amount=HOSTING_FEE,
+            status="success"
+        )
+        db.add(payment)
+        
+        # Create event
+        event = Events(
+            title=title,
+            venue=venue,
+            date=datetime.strptime(date, "%Y-%m-%d").date(),
+            seats=seats,
+            available_seats=seats,
+            host_id=host_id,
+            ticket_price=ticket_price
+        )
+        db.add(event)
+        db.commit()
+        db.refresh(event)
+        
+        # Handle document
+        safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
+        filename = f"{host_id}_{event.id}_{safe_title}.pdf"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        host_name = db.query(Hosts).filter(Hosts.id == host_id).first().company_name
+        if document_path and os.path.exists(document_path):
+            # Copy provided document
+            shutil.copy2(document_path, file_path)
+        else:
+            # Generate default PDF
+            from reportlab.pdfgen import canvas
+            c = canvas.Canvas(file_path)
+            c.drawString(100, 820, f"Host: {host_name}")
+            c.drawString(100, 800, f"Host ID: {host_id}")
+            c.drawString(100, 780, f"Event: {title}")
+            c.drawString(100, 760, f"Venue: {venue}")
+            c.drawString(100, 740, f"Date: {date}")
+            c.drawString(100, 720, f"Seats: {seats}")
+            c.drawString(100, 700, f"Price: INR {ticket_price}")
+            c.save()
+        
+        # Update event with document path
         event.document_path = filename
         db.commit()
         
         # Add to vector store
-        try:
-            from AI.RAG import process_event_document
-            process_event_document(event.id, file_path)
-            print(f"✅ Added updated event {event_id} to vector store")
-        except Exception as e:
-            print(f"⚠️ Error adding to vector store: {e}")
-    
-    return {"message": "Event updated successfully"}
-
-
-# --------------------------------------------------
-# UPDATE EVENT DOCUMENT
-# --------------------------------------------------
-@tool
-async def update_event_document(event_id: int, host: host_dependency, db: db_dependency, document: UploadFile = File(...)):
-    """Update ONLY the document for an event (keep event details same)"""
-    
-    event = db.query(Events).filter(Events.id == event_id, Events.host_id == host.id).first()
-    
-    if not event:
-        raise HTTPException(404, "Event not found")
-    
-    # Validate file type
-    if document.content_type != "application/pdf":
-        raise HTTPException(400, "Only PDF files allowed")
-    
-    # Delete old document from vector store
-    try:
-        from AI.RAG import delete_event_documents
-        delete_event_documents(event_id)
-        print(f"✅ Removed old event {event_id} from vector store")
-    except Exception as e:
-        print(f"⚠️ Error removing from vector store: {e}")
-    
-    # Delete old PDF file
-    if event.document_path:
-        old_path = os.path.join("uploads", event.document_path)
-        if os.path.exists(old_path):
-            os.remove(old_path)
-            print(f"🗑️ Deleted old PDF: {old_path}")
-    
-    # Save new PDF
-    safe_title = event.title.replace(" ", "_").replace("/", "").replace("\\", "")
-    filename = f"{host.id}_{event.id}_{safe_title}.pdf"
-    file_path = os.path.join("uploads", filename)
-    
-    # Save uploaded file
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(document.file, buffer)
-    
-    # Update database
-    event.document_path = filename
-    db.commit()
-    
-    # Add to vector store
-    try:
-        from AI.RAG import process_event_document
         process_event_document(event.id, file_path)
-        print(f"✅ Added new document for event {event_id} to vector store")
+        
+        # Clear cache
+        if redis_client:
+            import asyncio
+            try:
+                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+            except:
+                pass
+        
+        return {
+            "event_id": event.id,
+            "message": "Event created successfully"
+        }
+        
     except Exception as e:
-        print(f"⚠️ Error adding to vector store: {e}")
-    
-    return {"message": "Document updated successfully"}
-# --------------------------------------------------
-# LOGIN
-# --------------------------------------------------
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
 @tool
-async def login(form_data : OAuth2PasswordRequestForm = Depends(), db : Session = Depends(get_db)):
-    host = authenticate_host(form_data.username, form_data.password, db)
-    if not host:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+def delete_host_event(host_id: int, event_id: int) -> dict:
+    """
+    Delete an event created by the host.
+    Requires host_id and event_id.
+    Processes refunds for all bookings.
+    """
+    HOSTING_FEE = 500
+    
+    db = SessionLocal()
+    try:
+        event = db.query(Events).filter(
+            Events.id == event_id,
+            Events.host_id == host_id
+        ).first()
+        
+        if not event:
+            return {"error": "Event not found"}
+        
+        # Delete from vector store
+        delete_event_documents(event_id)
+        
+        # Process all bookings
+        bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
+        for booking in bookings:
+            refund_booking(db, booking, host_id)
+        
+        # Refund hosting fee
+        wallet = db.query(Wallets).filter(
+            Wallets.owner_type == "host", 
+            Wallets.owner_id == host_id
+        ).first()
+        if wallet:
+            wallet.balance += HOSTING_FEE
+        
+        # Delete document file
+        if event.document_path:
+            file_path = os.path.join(UPLOAD_DIR, event.document_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        
+        db.delete(event)
+        db.commit()
+        
+        # Clear cache
+        if redis_client:
+            import asyncio
+            try:
+                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+            except:
+                pass
+        
+        return {"message": "Event deleted successfully with refunds"}
+        
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
 
-    access_token = create_access_token(
-        entity_id = host.id,
-        entity_type = "host",
-        role = "host"
-    )
 
-    return {
-        "access_token" : access_token,
-        "token_type" : "bearer",
-        "type" : "host"
-    }
+@tool
+def update_host_event(
+    host_id: int,
+    event_id: int,
+    title: str,
+    venue: str,
+    date: str,
+    seats: int,
+    ticket_price: int
+) -> dict:
+    """
+    Update an existing event's details.
+    Requires host_id, event_id, and all event fields.
+    """
+    db = SessionLocal()
+    try:
+        event = db.query(Events).filter(
+            Events.id == event_id,
+            Events.host_id == host_id
+        ).first()
+        
+        if not event:
+            return {"error": "Event not found"}
+        
+        # Store old values
+        old_title = event.title
+        old_venue = event.venue
+        old_date = event.date
+        
+        # Update fields
+        diff = seats - event.seats
+        event.title = title
+        event.venue = venue
+        event.date = datetime.strptime(date, "%Y-%m-%d").date()
+        event.seats = seats
+        event.available_seats += diff
+        event.ticket_price = ticket_price
+        
+        db.commit()
+        
+        # Check if details changed
+        details_changed = (
+            old_title != title or
+            old_venue != venue or
+            old_date != event.date
+        )
+        
+        if details_changed:
+            # Remove old from vector store
+            delete_event_documents(event_id)
+            
+            # Delete old PDF
+            if event.document_path:
+                old_path = os.path.join(UPLOAD_DIR, event.document_path)
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+            
+            # Generate new PDF
+            safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
+            filename = f"{host_id}_{event_id}_{safe_title}.pdf"
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            
+            from reportlab.pdfgen import canvas
+            c = canvas.Canvas(file_path)
+            c.drawString(100, 800, f"Event: {title}")
+            c.drawString(100, 780, f"Venue: {venue}")
+            c.drawString(100, 760, f"Date: {date}")
+            c.drawString(100, 740, f"Seats: {seats}")
+            c.drawString(100, 720, f"Price: ₹{ticket_price}")
+            c.save()
+            
+            # Update database
+            event.document_path = filename
+            db.commit()
+            
+            # Add to vector store
+            process_event_document(event_id, file_path)
+        
+        # Clear cache
+        if redis_client:
+            import asyncio
+            try:
+                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+            except:
+                pass
+        
+        return {"message": "Event updated successfully"}
+        
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 
-host_toolkit = [
-    get_info,
-    get_events,
-    host_event,
-    delete_event,
-    update_event,
+@tool
+def update_event_document(host_id: int, event_id: int, pdf_path: str) -> dict:
+    """
+    Update just the document for an event.
+    Requires host_id, event_id, and path to new PDF file.
+    """
+    db = SessionLocal()
+    try:
+        event = db.query(Events).filter(
+            Events.id == event_id,
+            Events.host_id == host_id
+        ).first()
+        
+        if not event:
+            return {"error": "Event not found"}
+        
+        if not os.path.exists(pdf_path):
+            return {"error": "PDF file not found"}
+        
+        # Remove old from vector store
+        delete_event_documents(event_id)
+        
+        # Delete old PDF
+        if event.document_path:
+            old_path = os.path.join(UPLOAD_DIR, event.document_path)
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        
+        # Save new PDF
+        safe_title = event.title.replace(" ", "_").replace("/", "").replace("\\", "")
+        filename = f"{host_id}_{event_id}_{safe_title}.pdf"
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        
+        shutil.copy2(pdf_path, file_path)
+        
+        # Update database
+        event.document_path = filename
+        db.commit()
+        
+        # Add to vector store
+        process_event_document(event_id, file_path)
+        
+        return {"message": "Document updated successfully"}
+        
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+# --------------------------------------------------
+# Tool List
+# --------------------------------------------------
+host_tools = [
+    get_host_info,
+    get_host_events,
+    create_host_event,
+    delete_host_event,
+    update_host_event,
     update_event_document
 ]

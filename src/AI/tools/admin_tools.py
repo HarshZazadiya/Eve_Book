@@ -1,338 +1,640 @@
-from fastapi import Depends, HTTPException, Body
-from typing import Annotated
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from database import SessionLocal
-from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments
-from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
-from jose import jwt
-from model import HostingPayments
-from model import HostingPayments, HostPromotions
-import os
 from langchain_core.tools import tool
-# ---------------- DB ----------------
+from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments, HostingPayments, HostPromotions
+import os
+from typing import Optional
+from database import SessionLocal
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# ==================================================
+# HELPER FUNCTION (NOT A TOOL)
+# ==================================================
 
-db_dependency = Annotated[Session, Depends(get_db)]
-
-# ---------------- ADMIN AUTH ----------------
-@tool
-async def get_current_admin(token : Annotated[str, Depends(oauth2_bearer)], db : db_dependency):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin only")
-
-    admin = db.query(Users).filter(Users.id == payload.get("id")).first()
-
-    if not admin:
-        raise HTTPException(401, "Invalid admin")
-
-    return admin
-
-admin_dependency = Annotated[Users, Depends(get_current_admin)]
-
-@tool
-def refund_booking(db : Session, booking : Bookings):
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
-    payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
+def refund_booking_logic(db: Session, booking: Bookings):
+    """Helper function to refund a booking - not exposed as tool"""
+    wallet = db.query(Wallets).filter(Wallets.owner_type == "user",  Wallets.owner_id == booking.user_id).first()
+    
+    payment = db.query(BookingPayments).filter( BookingPayments.booking_id == booking.id).first()
+    
     event = db.query(Events).filter(Events.id == booking.event_id).first()
     host = db.query(Hosts).filter(Hosts.id == event.host_id).first() if event else None
-    host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first() if host else None
+    host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host",  Wallets.owner_id == host.id).first() if host else None
+
     if wallet and payment:
         wallet.balance += payment.amount
         db.delete(payment)
-    if host and host_wallet:
+
+    if host and host_wallet and payment:
         host_wallet.balance -= payment.amount
+
     if event:
         event.available_seats += booking.ticket_count
+
     db.delete(booking)
 
-# CREATE ADMIN
+
+# ==================================================
+# VERIFY ADMIN FUNCTION
+# ==================================================
+def verify_admin(db: Session, admin_id: int) -> bool:
+    """Verify that the user is an admin"""
+    admin = db.query(Users).filter(Users.id == admin_id,  Users.role == "admin").first()
+    return admin is not None
+
+
+# ==================================================
+# ADMIN TOOLS - WITH PROPER AUTHENTICATION
+# ==================================================
+
 @tool
-async def create_admin(db: db_dependency,email: str = Body(...),setup_key: str = Body(...)):
-    from main import ADMIN_SETUP_KEY
-    if setup_key != ADMIN_SETUP_KEY:
-        raise HTTPException(403, "Invalid setup key")
-    user = db.query(Users).filter(Users.email == email).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    user.role = "admin"
-    db.commit()
-    return {"message": f"{email} promoted to admin"}
-
-# VIEW USERS
-@tool
-async def get_all_users(admin: admin_dependency, db: db_dependency):
-    users = db.query(Users).filter(Users.role == "user").all()
-
-    return [
-        {
-            "id": u.id,
-            "username": u.username,
-            "email": u.email,
-            "role": u.role
-        }
-        for u in users
-    ]
-
-# VIEW HOSTS
-@tool
-async def get_all_hosts(admin: admin_dependency, db: db_dependency):
-    hosts = db.query(Hosts).all()
-
-    return [
-        {
-            "id": h.id,
-            "company_name": h.company_name,
-            "email": h.email
-        }
-        for h in hosts
-    ]
-
-# DELETE EVENT 
-@tool
-async def delete_event(event_id: int, admin: admin_dependency, db: db_dependency):
-
-    event = db.query(Events).filter(Events.id == event_id).first()
-
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
-
-    for booking in bookings:
-        refund_booking(db, booking)
-
-    db.delete(event)
-    db.commit()
-
-    return {"message": "Event deleted and refunds processed"}
-
-# DELETE BOOKING
-@tool
-async def delete_booking(booking_id: int, admin: admin_dependency, db: db_dependency):
-    booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
-    if not booking:
-        raise HTTPException(404, "Booking not found")
-
-    refund_booking(db, booking)
-    db.commit()
-
-    return {"message": "Booking deleted & refunded"}
-
-# DEMOTE HOST 
-@tool   
-async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
-    host = db.query(Hosts).filter(Hosts.id == host_id).first()
-    if not host:
-        raise HTTPException(404, "Host not found")
+def promote_to_admin(email: str, setup_key: str, admin_id: int) -> dict:
+    """
+    Promote a user to admin role.
+    Requires email, setup key, and admin authentication.
     
+    Args:
+        email: Email of user to promote
+        setup_key: Setup key for verification
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from main import ADMIN_SETUP_KEY
+    from database import SessionLocal
+    
+    # Verify setup key
+    if setup_key != ADMIN_SETUP_KEY:
+        return {"error": "Invalid setup key"}
+    
+    db = SessionLocal()
     try:
-        host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        user = db.query(Users).filter(Users.email == email).first()
+        
+        if not user:
+            return {"error": "User not found"}
+        
+        user.role = "admin"
+        db.commit()
+        return {"message": f"{email} promoted to admin"}
+    finally:
+        db.close()
 
+
+@tool
+def get_all_users(admin_id: int) -> dict:
+    """
+    Get all regular users in the system.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        users = db.query(Users).filter(Users.role == "user").all()
+        
+        return {
+            "total_users": len(users),
+            "users": [
+                {
+                    "id": u.id,
+                    "username": u.username,
+                    "email": u.email,
+                    "role": u.role
+                }
+                for u in users
+            ]
+        }
+    finally:
+        db.close()
+
+
+@tool
+def get_all_hosts(admin_id: int) -> dict:
+    """
+    Get all hosts in the system.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        # Get all hosts directly
+        hosts = db.query(Hosts).all()
+        
+        result = []
+        for host in hosts:
+            result.append({
+                "id": host.id,
+                "user_id": host.user_id,
+                "email": host.email,
+                "company_name": host.company_name,
+                "is_fee_paid": host.is_fee_paid
+            })
+        
+        return {
+            "total_hosts": len(result),
+            "hosts": result
+        }
+    except Exception as e:
+        return {"error": f"Failed to fetch hosts: {str(e)}"}
+    finally:
+        db.close()
+
+
+@tool
+def delete_event_by_id(event_id: int, admin_id: int) -> dict:
+    """
+    Delete an event by ID and process refunds for all bookings.
+    Admin only.
+    
+    Args:
+        event_id: ID of event to delete
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        event = db.query(Events).filter(Events.id == event_id).first()
+
+        if not event:
+            return {"error": "Event not found"}
+
+        bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
+
+        for booking in bookings:
+            refund_booking_logic(db, booking)
+
+        # Delete document file if exists
+        if event.document_path:
+            file_path = os.path.join("uploads", event.document_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        db.delete(event)
+        db.commit()
+        return {"message": f"Event {event_id} deleted and refunds processed"}
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@tool
+def delete_booking_by_id(booking_id: int, admin_id: int) -> dict:
+    """
+    Delete a booking by ID and process refund.
+    Admin only.
+    
+    Args:
+        booking_id: ID of booking to delete
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
+
+        if not booking:
+            return {"error": "Booking not found"}
+
+        refund_booking_logic(db, booking)
+        db.commit()
+        return {"message": f"Booking {booking_id} deleted & refunded"}
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@tool
+def demote_host_by_id(host_id: int, admin_id: int) -> dict:
+    """
+    Demote a host back to regular user.
+    Cancels all their events, processes refunds, transfers wallet balance.
+    Admin only.
+    
+    Args:
+        host_id: ID of host to demote
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        host = db.query(Hosts).filter(Hosts.id == host_id).first()
+
+        if not host:
+            return {"error": "Host not found"}
+
+        host_wallet = db.query(Wallets).filter(
+            Wallets.owner_type == "host", 
+            Wallets.owner_id == host.id
+        ).first()
+
+        # Process all events by this host
         events = db.query(Events).filter(Events.host_id == host.id).all()
 
         for event in events:
-            # Delete document file if it exists
+            # Delete document file
             if event.document_path:
                 file_path = os.path.join("uploads", event.document_path)
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    print(f"🗑️ Deleted document: {file_path}")
-            
-            # Also remove from vector store (you'll need to implement this)
-            # You can add a function in RAG.py to delete event documents
-            
+
+            # Cancel all bookings for this event
             bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
             for booking in bookings:
-                payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-                user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
+                refund_booking_logic(db, booking)
 
-                if payment and user_wallet:
-                    user_wallet.balance += payment.amount
-                    db.delete(payment)
-
-                db.delete(booking)
             db.delete(event)
 
-        if host.user_id and host_wallet:
-            promotions = db.query(HostPromotions).filter(HostPromotions.user_id == host.user_id).all()
-            for promo in promotions:
-                if promo.amount and promo.amount > 0:
-                    host_wallet.balance += promo.amount
-                db.delete(promo)
-
-        if host_wallet:
-            host_payments = db.query(HostingPayments).filter(HostingPayments.host_id == host.id).all()
-            for hp in host_payments:
-                if hp.amount and hp.amount > 0:
-                    host_wallet.balance += hp.amount
-                db.delete(hp)
-
+        # Update user role
         if host.user_id:
             user = db.query(Users).filter(Users.id == host.user_id).first()
             if user:
                 user.role = "user"
 
+        # Transfer wallet balance to user wallet
         if host_wallet and host.user_id:
-            user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == host.user_id).first()
+            user_wallet = db.query(Wallets).filter(
+                Wallets.owner_type == "user", 
+                Wallets.owner_id == host.user_id
+            ).first()
+
             if user_wallet:
                 user_wallet.balance += host_wallet.balance
                 db.delete(host_wallet)
-            else:
-                host_wallet.owner_type = "user"
-                host_wallet.owner_id = host.user_id
-                
+
         db.delete(host)
         db.commit()
+        return {"message": f"Host {host_id} demoted successfully"}
 
-        return {"message": "Host demoted successfully with full refunds and documents cleaned up"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(500, f"Failed to demote host: {str(e)}")
+        return {"error": str(e)}
+    finally:
+        db.close()
 
-# VIEW ALL EVENTS
-@tool
-async def get_all_events(admin: admin_dependency, db: db_dependency):
-    events = db.query(Events).all()
-    result = []
-
-    for event in events:
-        host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
-
-        result.append({
-            "event_id": event.id,
-            "host_id": event.host_id,
-            "title": event.title,
-            "venue": event.venue,
-            "date": str(event.date),
-            "total_seats": event.seats,
-            "available_seats": event.available_seats,
-            "ticket_price": event.ticket_price,
-            "host_company": host.company_name if host else None,
-            "host_email": host.email if host else None,
-            "more_details": f"/uploads/{os.path.basename(event.document_path)}"
-                if event.document_path else None
-        })
-
-    return result
-
-# VIEW BOOKINGS
-@tool
-async def get_all_bookings(admin: admin_dependency, db: db_dependency):
-    bookings = db.query(Bookings).all()
-    result = []
-    for booking in bookings:
-        user = db.query(Users).filter(Users.id == booking.user_id).first()
-        event = db.query(Events).filter(Events.id == booking.event_id).first()
-        payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-
-        result.append({
-            "booking_id": booking.id,
-            "user_username": user.username if user else None,
-            "user_email": user.email if user else None,
-            "event_title": event.title if event else None,
-            "event_id": booking.event_id,
-            "ticket_count": booking.ticket_count,
-            "payment_amount": payment.amount if payment else None,
-            "payment_status": payment.status if payment else None
-        })
-
-    return result
 
 @tool
-async def get_all_wallets(admin: admin_dependency, db: db_dependency):
-    wallets = db.query(Wallets).all()
-    result = []
-    for wallet in wallets:
-        if wallet.owner_type == "user":
-            user = db.query(Users).filter(Users.id == wallet.owner_id).first()
-            result.append({
-                "owner_type": "user",
-                "owner_id": wallet.owner_id,
-                "username": user.username if user else None,
-                "email": user.email if user else None,
-                "balance": wallet.balance
-            })
-        elif wallet.owner_type == "host":
-            host = db.query(Hosts).filter(Hosts.id == wallet.owner_id).first()
-            result.append({
-                "owner_type": "host",
-                "owner_id": wallet.owner_id,
-                "company_name": host.company_name if host else None,
-                "email": host.email if host else None,
-                "balance": wallet.balance
-            })
+def get_all_events(admin_id: int) -> dict:
+    """
+    Get all events in the system with host details.
+    Admin only.
     
-    return result
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        events = db.query(Events).all()
+        result = []
+
+        for event in events:
+            host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
+            host_user = db.query(Users).filter(Users.id == host.user_id).first() if host else None
+            
+            result.append({
+                "event_id": event.id,
+                "title": event.title,
+                "venue": event.venue,
+                "date": str(event.date),
+                "total_seats": event.seats,
+                "available_seats": event.available_seats,
+                "ticket_price": event.ticket_price,
+                "host_id": event.host_id,
+                "host_company": host.company_name if host else None,
+                "host_email": host.email if host else None,
+                "host_username": host_user.username if host_user else None,
+                "document_available": bool(event.document_path)
+            })
+        
+        return {
+            "total_events": len(result),
+            "events": result
+        }
+    finally:
+        db.close()
+
 
 @tool
-async def get_all_promotions(admin: admin_dependency, db: db_dependency):
-    promotions = db.query(HostPromotions).all()
-    result = []
-    for promotion in promotions:
-        host = db.query(Hosts).filter(Hosts.id == promotion.user_id).first()
-        result.append({
-            "user_id" : promotion.user_id,
-            "company_name" : host.company_name if host else None,
-            "email" : host.email if host else None,
-            "amount" : promotion.amount,
-            "status" : promotion.status
-        })
-    return result
+def get_all_bookings(admin_id: int) -> dict:
+    """
+    Get all bookings in the system.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        bookings = db.query(Bookings).all()
+        result = []
+        
+        for b in bookings:
+            user = db.query(Users).filter(Users.id == b.user_id).first()
+            event = db.query(Events).filter(Events.id == b.event_id).first()
+            
+            result.append({
+                "booking_id": b.id,
+                "user_id": b.user_id,
+                "username": user.username if user else "Unknown",
+                "user_email": user.email if user else "Unknown",
+                "event_id": b.event_id,
+                "event_title": event.title if event else "Unknown",
+                "ticket_count": b.ticket_count
+            })
+        
+        return {
+            "total_bookings": len(result),
+            "bookings": result
+        }
+    finally:
+        db.close()
+
 
 @tool
-async def get_all_booking_transactions(admin: admin_dependency, db: db_dependency):
-    transactions = db.query(BookingPayments).all()
-    result = []
+def get_all_wallets(admin_id: int) -> dict:
+    """
+    Get all wallets in the system.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        wallets = db.query(Wallets).all()
+        result = []
+        
+        for w in wallets:
+            owner_info = {}
+            if w.owner_type == "user":
+                user = db.query(Users).filter(Users.id == w.owner_id).first()
+                owner_info = {
+                    "username": user.username if user else "Unknown",
+                    "email": user.email if user else "Unknown",
+                    "role": user.role if user else "Unknown"
+                }
+            elif w.owner_type == "host":
+                host = db.query(Hosts).filter(Hosts.id == w.owner_id).first()
+                owner_info = {
+                    "company_name": host.company_name if host else "Unknown",
+                    "email": host.email if host else "Unknown"
+                }
+            
+            result.append({
+                "owner_type": w.owner_type,
+                "owner_id": w.owner_id,
+                "balance": w.balance,
+                **owner_info
+            })
+        
+        return {
+            "total_wallets": len(result),
+            "wallets": result
+        }
+    finally:
+        db.close()
 
-    for transaction in transactions:
-        booking = db.query(Bookings).filter(Bookings.id == transaction.booking_id).first()
-        user = db.query(Users).filter(Users.id == booking.user_id).first() if booking else None
-
-        result.append({
-            "booking_id": transaction.booking_id,
-            "user_id": booking.user_id if booking else None,
-            "username": user.username if user else None,
-            "amount": transaction.amount,
-            "status": transaction.status
-        })
-
-    return result
 
 @tool
-async def get_all_hosting_transactions(admin: admin_dependency, db: db_dependency):
-    transactions = db.query(HostingPayments).all()
-    result = []
-    for transaction in transactions:
-        host = db.query(Hosts).filter(Hosts.id == transaction.host_id).first()
-        result.append({
-            "host_id": transaction.host_id,
-            "amount": transaction.amount,
-            "company_name": host.company_name if host else None,
-            "status": transaction.status
-        })
+def get_all_promotions(admin_id: int) -> dict:
+    """
+    Get all host promotion records.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        promotions = db.query(HostPromotions).all()
+        result = []
+        
+        for p in promotions:
+            user = db.query(Users).filter(Users.id == p.user_id).first()
+            host = db.query(Hosts).filter(Hosts.user_id == p.user_id).first() if user else None
+            
+            result.append({
+                "promotion_id": p.id,
+                "user_id": p.user_id,
+                "username": user.username if user else "Unknown",
+                "company_name": host.company_name if host else None,
+                "amount": p.amount,
+                "status": p.status,
+                "created_at": str(p.created_at)
+            })
+        
+        return {
+            "total_promotions": len(result),
+            "promotions": result
+        }
+    finally:
+        db.close()
 
-    return result
+
+@tool
+def get_all_booking_transactions(admin_id: int) -> dict:
+    """
+    Get all booking payment transactions.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        transactions = db.query(BookingPayments).all()
+        result = []
+        
+        for t in transactions:
+            user = db.query(Users).filter(Users.id == t.user_id).first()
+            booking = db.query(Bookings).filter(Bookings.id == t.booking_id).first()
+            event = db.query(Events).filter(Events.id == booking.event_id).first() if booking else None
+            
+            result.append({
+                "transaction_id": t.id,
+                "booking_id": t.booking_id,
+                "user_id": t.user_id,
+                "username": user.username if user else "Unknown",
+                "event_title": event.title if event else "Unknown",
+                "amount": t.amount,
+                "status": t.status,
+                "created_at": str(t.created_at)
+            })
+        
+        return {
+            "total_transactions": len(result),
+            "transactions": result
+        }
+    finally:
+        db.close()
 
 
-admin_toolkit = [
-    get_current_admin,
+@tool
+def get_all_hosting_transactions(admin_id: int) -> dict:
+    """
+    Get all hosting fee transactions.
+    Admin only.
+    
+    Args:
+        admin_id: ID of admin performing action (automatically provided)
+    """
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Verify caller is admin
+        if not verify_admin(db, admin_id):
+            return {"error": "Admin access required"}
+        
+        transactions = db.query(HostingPayments).all()
+        result = []
+        
+        for t in transactions:
+            host = db.query(Hosts).filter(Hosts.id == t.host_id).first()
+            user = db.query(Users).filter(Users.id == host.user_id).first() if host else None
+            
+            result.append({
+                "transaction_id": t.id,
+                "host_id": t.host_id,
+                "company_name": host.company_name if host else "Unknown",
+                "username": user.username if user else "Unknown",
+                "amount": t.amount,
+                "status": t.status,
+                "created_at": str(t.created_at)
+            })
+        
+        return {
+            "total_transactions": len(result),
+            "transactions": result
+        }
+    finally:
+        db.close()
+
+@tool
+def get_system_stats(admin_id: int) -> dict:
+    """
+    [ADMIN ONLY] Get basic system statistics.
+    
+    Returns ONLY these exact metrics:
+    - total_users: Number of regular users
+    - total_hosts: Number of hosts
+    - total_events: Number of events
+    - total_bookings: Number of bookings
+    - total_wallets: Number of wallets
+    
+    Args:
+        admin_id: Your admin ID (automatically provided)
+    
+    Returns:
+        Dictionary with exactly these 5 metrics
+    """
+    db = SessionLocal()
+    try:
+        # Verify admin
+        admin = db.query(Users).filter(
+            Users.id == admin_id, 
+            Users.role == "admin"
+        ).first()
+        
+        if not admin:
+            return {"error": "Admin access required"}
+        
+        # Get only the stats that exist in database
+        stats = {
+            "total_users": db.query(Users).filter(Users.role == "user").count(),
+            "total_hosts": db.query(Hosts).count(),
+            "total_events": db.query(Events).count(),
+            "total_bookings": db.query(Bookings).count(),
+            "total_wallets": db.query(Wallets).count()
+        }
+        
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+# ==================================================
+# TOOLKIT LIST FOR AGENT
+# ==================================================
+
+admin_tools = [
+    promote_to_admin,
     get_all_users,
     get_all_hosts,
-    delete_event,
-    delete_booking,
-    demote_host,
+    delete_event_by_id,
+    delete_booking_by_id,
+    demote_host_by_id,
     get_all_events,
     get_all_bookings,
     get_all_wallets,
     get_all_promotions,
     get_all_booking_transactions,
-    get_all_hosting_transactions
+    get_all_hosting_transactions,
+    get_system_stats
 ]

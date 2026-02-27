@@ -2,20 +2,29 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from typing import Annotated
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments
+from model import Users
 from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
 from jose import jwt
-from model import HostingPayments
-from model import HostingPayments, HostPromotions
-import os
-
-router = APIRouter(
-    prefix = "/admin", 
-    tags = ["Admin"]
+from AI.tools.admin_tools import (
+    promote_to_admin,
+    get_all_users,
+    get_all_hosts,
+    delete_event_by_id,
+    delete_booking_by_id,
+    demote_host_by_id,
+    get_all_events,
+    get_all_bookings,
+    get_all_wallets,
+    get_all_promotions,
+    get_all_booking_transactions,
+    get_all_hosting_transactions,
+    get_system_stats
 )
+from model import Events, Users, Hosts, Bookings, Wallets
+
+router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # ---------------- DB ----------------
-
 def get_db():
     db = SessionLocal()
     try:
@@ -26,311 +35,265 @@ def get_db():
 db_dependency = Annotated[Session, Depends(get_db)]
 
 # ---------------- ADMIN AUTH ----------------
+async def get_current_admin(token: Annotated[str, Depends(oauth2_bearer)], db: db_dependency):
+    """
+    Verify that the current user is an admin
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
-async def get_current_admin(token : Annotated[str, Depends(oauth2_bearer)], db : db_dependency):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Check if role is admin
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code = 403, detail = "Admin access required")
 
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin only")
+        # Get admin from database
+        admin = db.query(Users).filter(Users.id == payload.get("id")).first()
 
-    admin = db.query(Users).filter(Users.id == payload.get("id")).first()
+        if not admin:
+            raise HTTPException(status_code = 401, detail = "Admin not found")
 
-    if not admin:
-        raise HTTPException(401, "Invalid admin")
+        if admin.role != "admin":
+            raise HTTPException(status_code = 403, detail = "User is no longer admin")
 
-    return admin
+        return admin
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code = 401, detail = "Token expired")
+    except jwt.JWTError:
+        raise HTTPException(status_code = 401, detail = "Invalid token")
+    except Exception as e:
+        raise HTTPException(status_code = 401, detail = f"Authentication error : {str(e)}")
 
 admin_dependency = Annotated[Users, Depends(get_current_admin)]
 
-def refund_booking(db : Session, booking : Bookings):
-    wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
-    payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-    event = db.query(Events).filter(Events.id == booking.event_id).first()
-    host = db.query(Hosts).filter(Hosts.id == event.host_id).first() if event else None
-    host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first() if host else None
-    if wallet and payment:
-        wallet.balance += payment.amount
-        db.delete(payment)
-    if host and host_wallet:
-        host_wallet.balance -= payment.amount
-    if event:
-        event.available_seats += booking.ticket_count
-    db.delete(booking)
-
-# CREATE ADMIN
+# ============================
+# ADMIN ROUTES
+# ============================
 
 @router.post("/create-admin")
-async def create_admin(db: db_dependency,email: str = Body(...),setup_key: str = Body(...)):
-    from main import ADMIN_SETUP_KEY
-    if setup_key != ADMIN_SETUP_KEY:
-        raise HTTPException(403, "Invalid setup key")
-    user = db.query(Users).filter(Users.email == email).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    user.role = "admin"
-    db.commit()
-    return {"message": f"{email} promoted to admin"}
+async def create_admin_endpoint(email: str = Body(...), setup_key: str = Body(...)):
+    """
+    Promote a user to admin.
+    This endpoint does NOT require admin authentication (uses setup key).
+    """
+    
+    result = promote_to_admin.invoke({
+        "email" : email,
+        "setup_key" : setup_key,
+        "admin_id" : 0  # Special case - setup key used instead of admin auth
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 400, detail = result["error"])
+    
+    return result
 
-# VIEW USERS
 
 @router.get("/users")
-async def get_all_users(admin: admin_dependency, db: db_dependency):
-    users = db.query(Users).filter(Users.role == "user").all()
+async def get_users_endpoint(admin: admin_dependency):
+    """
+    Get all regular users in the system.
+    Admin only.
+    """
+    result = get_all_users.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
+    return result
 
-    return [
-        {
-            "id": u.id,
-            "username": u.username,
-            "email": u.email,
-            "role": u.role
-        }
-        for u in users
-    ]
-
-# VIEW HOSTS
 
 @router.get("/hosts")
-async def get_all_hosts(admin: admin_dependency, db: db_dependency):
-    hosts = db.query(Hosts).all()
+async def get_hosts_endpoint(admin : admin_dependency):
+    """
+    Get all hosts in the system.
+    Admin only.
+    """
+    result = get_all_hosts.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
+    return result
 
-    return [
-        {
-            "id": h.id,
-            "company_name": h.company_name,
-            "email": h.email
-        }
-        for h in hosts
-    ]
-
-# DELETE EVENT 
 
 @router.delete("/event/{event_id}")
-async def delete_event(event_id: int, admin: admin_dependency, db: db_dependency):
+async def delete_event_endpoint(event_id : int,  admin : admin_dependency
+):
+    """
+    Delete an event by ID and process refunds.
+    Admin only.
+    """
+    result = delete_event_by_id.invoke({
+        "event_id" : event_id,
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 404, detail = result["error"])
+    
+    return result
 
-    event = db.query(Events).filter(Events.id == event_id).first()
-
-    if not event:
-        raise HTTPException(404, "Event not found")
-
-    bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
-
-    for booking in bookings:
-        refund_booking(db, booking)
-
-    db.delete(event)
-    db.commit()
-
-    return {"message": "Event deleted and refunds processed"}
-
-# DELETE BOOKING
 
 @router.delete("/booking/{booking_id}")
-async def delete_booking(booking_id: int, admin: admin_dependency, db: db_dependency):
-    booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
-    if not booking:
-        raise HTTPException(404, "Booking not found")
+async def delete_booking_endpoint(booking_id: int,  admin: admin_dependency):
+    """
+    Delete a booking by ID and process refund.
+    Admin only.
+    """
+    result = delete_booking_by_id.invoke({
+        "booking_id" : booking_id,
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 404, detail = result["error"])
+    
+    return result
 
-    refund_booking(db, booking)
-    db.commit()
-
-    return {"message": "Booking deleted & refunded"}
-
-# DEMOTE HOST 
 
 @router.post("/demote-host/{host_id}")
-async def demote_host(host_id: int, admin: admin_dependency, db: db_dependency):
-    host = db.query(Hosts).filter(Hosts.id == host_id).first()
-    if not host:
-        raise HTTPException(404, "Host not found")
+async def demote_host_endpoint(host_id : int,  admin : admin_dependency):
+    """
+    Demote a host back to regular user.
+    Admin only.
+    """
+    result = demote_host_by_id.invoke({
+        "host_id" : host_id,
+        "admin_id" : admin.id
+    })
     
-    try:
-        host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
-
-        events = db.query(Events).filter(Events.host_id == host.id).all()
-
-        for event in events:
-            # Delete document file if it exists
-            if event.document_path:
-                file_path = os.path.join("uploads", event.document_path)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    print(f"🗑️ Deleted document: {file_path}")
-            
-            # Also remove from vector store (you'll need to implement this)
-            # You can add a function in RAG.py to delete event documents
-            
-            bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
-            for booking in bookings:
-                payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-                user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
-
-                if payment and user_wallet:
-                    user_wallet.balance += payment.amount
-                    db.delete(payment)
-
-                db.delete(booking)
-            db.delete(event)
-
-        if host.user_id and host_wallet:
-            promotions = db.query(HostPromotions).filter(HostPromotions.user_id == host.user_id).all()
-            for promo in promotions:
-                if promo.amount and promo.amount > 0:
-                    host_wallet.balance += promo.amount
-                db.delete(promo)
-
-        if host_wallet:
-            host_payments = db.query(HostingPayments).filter(HostingPayments.host_id == host.id).all()
-            for hp in host_payments:
-                if hp.amount and hp.amount > 0:
-                    host_wallet.balance += hp.amount
-                db.delete(hp)
-
-        if host.user_id:
-            user = db.query(Users).filter(Users.id == host.user_id).first()
-            if user:
-                user.role = "user"
-
-        if host_wallet and host.user_id:
-            user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == host.user_id).first()
-            if user_wallet:
-                user_wallet.balance += host_wallet.balance
-                db.delete(host_wallet)
-            else:
-                host_wallet.owner_type = "user"
-                host_wallet.owner_id = host.user_id
-                
-        db.delete(host)
-        db.commit()
-
-        return {"message": "Host demoted successfully with full refunds and documents cleaned up"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(500, f"Failed to demote host: {str(e)}")
-
-# VIEW ALL EVENTS
-@router.get("/events")
-async def get_all_events(admin: admin_dependency, db: db_dependency):
-    events = db.query(Events).all()
-    result = []
-
-    for event in events:
-        host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
-
-        result.append({
-            "event_id": event.id,
-            "host_id": event.host_id,
-            "title": event.title,
-            "venue": event.venue,
-            "date": str(event.date),
-            "total_seats": event.seats,
-            "available_seats": event.available_seats,
-            "ticket_price": event.ticket_price,
-            "host_company": host.company_name if host else None,
-            "host_email": host.email if host else None,
-            "more_details": f"/uploads/{os.path.basename(event.document_path)}"
-                if event.document_path else None
-        })
-
+    if "error" in result:
+        raise HTTPException(status_code = 400, detail = result["error"])
+    
     return result
 
-# VIEW BOOKINGS
+
+@router.get("/events")
+async def get_events_endpoint(admin: admin_dependency):
+    """
+    Get all events in the system with host details.
+    Admin only.
+    """
+    result = get_all_events.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
+    return result
+
 
 @router.get("/bookings")
-async def get_all_bookings(admin: admin_dependency, db: db_dependency):
-    bookings = db.query(Bookings).all()
-    result = []
-    for booking in bookings:
-        user = db.query(Users).filter(Users.id == booking.user_id).first()
-        event = db.query(Events).filter(Events.id == booking.event_id).first()
-        payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
-
-        result.append({
-            "booking_id": booking.id,
-            "user_username": user.username if user else None,
-            "user_email": user.email if user else None,
-            "event_title": event.title if event else None,
-            "event_id": booking.event_id,
-            "ticket_count": booking.ticket_count,
-            "payment_amount": payment.amount if payment else None,
-            "payment_status": payment.status if payment else None
-        })
-
-    return result
-
-# get all wallets
-# VIEW ALL WALLETS
-
-@router.get("/wallets")
-async def get_all_wallets(admin: admin_dependency, db: db_dependency):
-    wallets = db.query(Wallets).all()
-    result = []
-    for wallet in wallets:
-        if wallet.owner_type == "user":
-            user = db.query(Users).filter(Users.id == wallet.owner_id).first()
-            result.append({
-                "owner_type": "user",
-                "owner_id": wallet.owner_id,
-                "username": user.username if user else None,
-                "email": user.email if user else None,
-                "balance": wallet.balance
-            })
-        elif wallet.owner_type == "host":
-            host = db.query(Hosts).filter(Hosts.id == wallet.owner_id).first()
-            result.append({
-                "owner_type": "host",
-                "owner_id": wallet.owner_id,
-                "company_name": host.company_name if host else None,
-                "email": host.email if host else None,
-                "balance": wallet.balance
-            })
+async def get_bookings_endpoint(admin: admin_dependency):
+    """
+    Get all bookings in the system.
+    Admin only.
+    """
+    result = get_all_bookings.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
     
     return result
 
+
+@router.get("/wallets")
+async def get_wallets_endpoint(admin : admin_dependency):
+    """
+    Get all wallets in the system.
+    Admin only.
+    """
+    result = get_all_wallets.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
+    return result
+
+
 @router.get("/promotions")
-async def get_all_promotions(admin: admin_dependency, db: db_dependency):
-    promotions = db.query(HostPromotions).all()
-    result = []
-    for promotion in promotions:
-        host = db.query(Hosts).filter(Hosts.id == promotion.user_id).first()
-        result.append({
-            "user_id" : promotion.user_id,
-            "company_name" : host.company_name if host else None,
-            "email" : host.email if host else None,
-            "amount" : promotion.amount,
-            "status" : promotion.status
-        })
+async def get_promotions_endpoint(admin : admin_dependency):
+    """
+    Get all host promotion records.
+    Admin only.
+    """
+    result = get_all_promotions.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
     return result
 
-@router.get("/booking_transactions")
-async def get_all_booking_transactions(admin: admin_dependency, db: db_dependency):
-    transactions = db.query(BookingPayments).all()
-    result = []
 
-    for transaction in transactions:
-        booking = db.query(Bookings).filter(Bookings.id == transaction.booking_id).first()
-        user = db.query(Users).filter(Users.id == booking.user_id).first() if booking else None
-
-        result.append({
-            "booking_id": transaction.booking_id,
-            "user_id": booking.user_id if booking else None,
-            "username": user.username if user else None,
-            "amount": transaction.amount,
-            "status": transaction.status
-        })
-
+@router.get("/booking-transactions")
+async def get_booking_transactions_endpoint(admin : admin_dependency):
+    """
+    Get all booking payment transactions.
+    Admin only.
+    """
+    result = get_all_booking_transactions.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
     return result
 
-@router.get("/host_transactions")
-async def get_all_hosting_transactions(admin: admin_dependency, db: db_dependency):
-    transactions = db.query(HostingPayments).all()
-    result = []
-    for transaction in transactions:
-        host = db.query(Hosts).filter(Hosts.id == transaction.host_id).first()
-        result.append({
-            "host_id": transaction.host_id,
-            "amount": transaction.amount,
-            "company_name": host.company_name if host else None,
-            "status": transaction.status
-        })
 
+@router.get("/hosting-transactions")
+async def get_hosting_transactions_endpoint(admin : admin_dependency):
+    """
+    Get all hosting fee transactions.
+    Admin only.
+    """
+    result = get_all_hosting_transactions.invoke({
+        "admin_id" : admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code = 403, detail = result["error"])
+    
+    return result
+
+
+# ============================
+# DEBUG/HEALTH ENDPOINTS
+# ============================
+
+@router.get("/check-auth")
+async def check_admin_auth(admin : admin_dependency):
+    """
+    Check if current user is authenticated as admin.
+    Useful for debugging.
+    """
+    return {
+        "id" : admin.id,
+        "username" : admin.username,
+        "email" : admin.email,
+        "role" : admin.role,
+        "is_admin" : True
+    }
+
+@router.get("/stats")
+async def get_stats_endpoint(admin: admin_dependency):
+    """Get system statistics - returns ONLY real data"""
+    result = get_system_stats.invoke({
+        "admin_id": admin.id
+    })
+    
+    if "error" in result:
+        raise HTTPException(status_code=403, detail=result["error"])
+    
     return result
