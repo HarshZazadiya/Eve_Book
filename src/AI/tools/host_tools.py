@@ -1,12 +1,10 @@
-# AI/tools/host_tools.py
+from typing import Optional
 from langchain_core.tools import tool
 import os
 import json
 import shutil
 from datetime import datetime
-from pathlib import Path
-import redis.asyncio as redis
-from typing import Optional
+import redis  
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
@@ -19,7 +17,7 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 REDIS_URL = os.getenv("REDIS_URL")
-redis_client = redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 # --------------------------------------------------
 # Helper Functions
@@ -36,28 +34,15 @@ def get_host_wallet(host_id: int):
     """Get host wallet"""
     db = SessionLocal()
     try:
-        return db.query(Wallets).filter(
-            Wallets.owner_type == "host", 
-            Wallets.owner_id == host_id
-        ).first()
+        return db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host_id).first()
     finally:
         db.close()
 
 def refund_booking(db: Session, booking: Bookings, host_id: int):
     """Refund a booking"""
-    payment = db.query(BookingPayments).filter(
-        BookingPayments.booking_id == booking.id
-    ).first()
-    
-    user_wallet = db.query(Wallets).filter(
-        Wallets.owner_type == "user", 
-        Wallets.owner_id == booking.user_id
-    ).first()
-    
-    host_wallet = db.query(Wallets).filter(
-        Wallets.owner_type == "host", 
-        Wallets.owner_id == host_id
-    ).first()
+    payment = db.query(BookingPayments).filter(BookingPayments.booking_id == booking.id).first()
+    user_wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == booking.user_id).first()
+    host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host_id).first()
 
     if payment and user_wallet:
         user_wallet.balance += payment.amount
@@ -79,11 +64,10 @@ def get_host_info(host_id: int) -> dict:
     """
     cache_key = f"host:{host_id}"
     
-    # Try cache first
+    # Try cache first - NO asyncio!
     if redis_client:
-        import asyncio
         try:
-            cached = asyncio.run(redis_client.get(cache_key))
+            cached = redis_client.get(cache_key)
             if cached:
                 return json.loads(cached)
         except:
@@ -101,10 +85,10 @@ def get_host_info(host_id: int) -> dict:
             "email": host.email
         }
         
-        # Cache it
+        # Cache it - use setex for expiry
         if redis_client:
             try:
-                asyncio.run(redis_client.set(cache_key, json.dumps(data), ex=300))
+                redis_client.setex(cache_key, 300, json.dumps(data))  # 300 seconds
             except:
                 pass
         
@@ -123,9 +107,8 @@ def get_host_events(host_id: int) -> list:
     
     # Try cache first
     if redis_client:
-        import asyncio
         try:
-            cached = asyncio.run(redis_client.get(cache_key))
+            cached = redis_client.get(cache_key)
             if cached:
                 return json.loads(cached)
         except:
@@ -148,10 +131,10 @@ def get_host_events(host_id: int) -> list:
                 "more_details": f"/uploads/{e.document_path}" if e.document_path else None
             })
         
-        # Cache it
+        # Cache it - use setex
         if redis_client:
             try:
-                asyncio.run(redis_client.set(cache_key, json.dumps(result), ex=10))
+                redis_client.setex(cache_key, 10, json.dumps(result))  # 10 seconds
             except:
                 pass
         
@@ -218,11 +201,10 @@ def create_host_event(
         filename = f"{host_id}_{event.id}_{safe_title}.pdf"
         file_path = os.path.join(UPLOAD_DIR, filename)
         host_name = db.query(Hosts).filter(Hosts.id == host_id).first().company_name
+        
         if document_path and os.path.exists(document_path):
-            # Copy provided document
             shutil.copy2(document_path, file_path)
         else:
-            # Generate default PDF
             from reportlab.pdfgen import canvas
             c = canvas.Canvas(file_path)
             c.drawString(100, 820, f"Host: {host_name}")
@@ -231,7 +213,7 @@ def create_host_event(
             c.drawString(100, 760, f"Venue: {venue}")
             c.drawString(100, 740, f"Date: {date}")
             c.drawString(100, 720, f"Seats: {seats}")
-            c.drawString(100, 700, f"Price: INR {ticket_price}")
+            c.drawString(100, 700, f"Price: ₹{ticket_price}")
             c.save()
         
         # Update event with document path
@@ -241,11 +223,10 @@ def create_host_event(
         # Add to vector store
         process_event_document(event.id, file_path)
         
-        # Clear cache
+        # Clear cache - simple delete, no asyncio
         if redis_client:
-            import asyncio
             try:
-                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+                redis_client.delete(f"host_events:{host_id}")
             except:
                 pass
         
@@ -273,7 +254,7 @@ def delete_host_event(host_id: int, event_id: int) -> dict:
     db = SessionLocal()
     try:
         event = db.query(Events).filter(
-            Events.id == event_id,
+            Events.id == event_id, 
             Events.host_id == host_id
         ).first()
         
@@ -307,9 +288,8 @@ def delete_host_event(host_id: int, event_id: int) -> dict:
         
         # Clear cache
         if redis_client:
-            import asyncio
             try:
-                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+                redis_client.delete(f"host_events:{host_id}")
             except:
                 pass
         
@@ -339,7 +319,7 @@ def update_host_event(
     db = SessionLocal()
     try:
         event = db.query(Events).filter(
-            Events.id == event_id,
+            Events.id == event_id, 
             Events.host_id == host_id
         ).first()
         
@@ -350,6 +330,7 @@ def update_host_event(
         old_title = event.title
         old_venue = event.venue
         old_date = event.date
+        old_price = event.ticket_price
         
         # Update fields
         diff = seats - event.seats
@@ -362,24 +343,30 @@ def update_host_event(
         
         db.commit()
         
-        # Check if details changed
+        # Check if ANY event details changed
         details_changed = (
             old_title != title or
             old_venue != venue or
-            old_date != event.date
+            old_date != event.date or
+            old_price != ticket_price
         )
         
+        # IMPORTANT: Always regenerate PDF if details changed
         if details_changed:
-            # Remove old from vector store
-            delete_event_documents(event_id)
+            print(f"📝 Event {event_id} details changed, updating document...")
             
-            # Delete old PDF
+            # STEP 1: Delete from vector store
+            delete_event_documents(event_id)
+            print(f"✅ Removed old event {event_id} from vector store")
+            
+            # STEP 2: Delete old PDF file
             if event.document_path:
                 old_path = os.path.join(UPLOAD_DIR, event.document_path)
                 if os.path.exists(old_path):
                     os.remove(old_path)
+                    print(f"🗑️ Deleted old PDF: {old_path}")
             
-            # Generate new PDF
+            # STEP 3: Generate new PDF with updated details
             safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
             filename = f"{host_id}_{event_id}_{safe_title}.pdf"
             file_path = os.path.join(UPLOAD_DIR, filename)
@@ -390,21 +377,23 @@ def update_host_event(
             c.drawString(100, 780, f"Venue: {venue}")
             c.drawString(100, 760, f"Date: {date}")
             c.drawString(100, 740, f"Seats: {seats}")
-            c.drawString(100, 720, f"Price: ₹{ticket_price}")
+            c.drawString(100, 720, f"Price: INR {ticket_price}")
+            c.drawString(100, 700, f"Host ID: {host_id}")
             c.save()
+            print(f"📄 Generated new PDF: {filename}")
             
-            # Update database
+            # STEP 4: Update database with new filename
             event.document_path = filename
             db.commit()
             
-            # Add to vector store
+            # STEP 5: Add to vector store
             process_event_document(event_id, file_path)
+            print(f"✅ Added updated event {event_id} to vector store")
         
-        # Clear cache
+        # Clear Redis cache
         if redis_client:
-            import asyncio
             try:
-                asyncio.run(redis_client.delete(f"host_events:{host_id}"))
+                redis_client.delete(f"host_events:{host_id}")
             except:
                 pass
         
@@ -412,6 +401,7 @@ def update_host_event(
         
     except Exception as e:
         db.rollback()
+        print(f"❌ Error updating event: {e}")
         return {"error": str(e)}
     finally:
         db.close()

@@ -4,8 +4,6 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from routers.auth import get_current_user
 from model import Users
-
-# Import AI tools
 from AI.tools.user_tools import (
     get_user_profile,
     get_all_available_events,
@@ -38,7 +36,7 @@ user_dependency = Annotated[Users, Depends(get_current_user)]
 async def get_user_info(user: user_dependency):
     """Get current user information"""
     result = get_user_profile.invoke({
-        "user_id": user.id
+        "authenticated_user_id": user.id
     })
     
     if "error" in result:
@@ -66,7 +64,7 @@ async def get_all_events(user: user_dependency):
 async def get_my_events(user: user_dependency):
     """Get current user's bookings"""
     result = get_user_bookings.invoke({
-        "user_id": user.id
+        "authenticated_user_id": user.id
     })
     
     if "error" in result:
@@ -81,7 +79,7 @@ async def get_my_events(user: user_dependency):
 async def promote_to_host(user: user_dependency):
     """Promote current user to host (costs ₹10,000)"""
     result = promote_user_to_host.invoke({
-        "user_id": user.id
+        "authenticated_user_id": user.id
     })
     
     if "error" in result:
@@ -96,7 +94,7 @@ async def promote_to_host(user: user_dependency):
 async def book_event(event_id: int, user: user_dependency):
     """Book a ticket for an event"""
     result = book_event_for_user.invoke({
-        "user_id": user.id,
+        "authenticated_user_id": user.id,
         "event_id": event_id
     })
     
@@ -112,7 +110,7 @@ async def book_event(event_id: int, user: user_dependency):
 async def cancel_booking(booking_id: int, user: user_dependency):
     """Cancel a booking and get refund"""
     result = cancel_user_booking.invoke({
-        "user_id": user.id,
+        "authenticated_user_id": user.id,
         "booking_id": booking_id
     })
     

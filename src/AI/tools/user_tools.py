@@ -1,7 +1,8 @@
+import os
 from langchain_core.tools import tool
 import json
 from database import SessionLocal
-from model import Users, Events, Bookings, Wallets, Hosts, HostPromotions
+from model import BookingPayments, Users, Events, Bookings, Wallets, Hosts, HostPromotions
 
 @tool
 def get_user_profile(authenticated_user_id: int) -> dict:
@@ -29,12 +30,11 @@ def get_user_profile(authenticated_user_id: int) -> dict:
     finally:
         db.close()
 
-
 @tool
 def get_all_available_events() -> list:
     """
     Get all events available in the system.
-    Returns list of events with basic details.
+    Returns list of events with basic details including document links.
     """
     db = SessionLocal()
     try:
@@ -43,6 +43,13 @@ def get_all_available_events() -> list:
         result = []
         for event in events:
             host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
+            
+            # Create more_details URL if document exists
+            more_details = None
+            if event.document_path:
+                filename = os.path.basename(event.document_path)
+                more_details = f"/uploads/{filename}"
+            
             result.append({
                 "id": event.id,
                 "title": event.title,
@@ -51,7 +58,10 @@ def get_all_available_events() -> list:
                 "available_seats": event.available_seats,
                 "total_seats": event.seats,
                 "ticket_price": event.ticket_price,
-                "host": host.company_name if host else f"Host {event.host_id}"
+                "host": host.company_name if host else f"Host {event.host_id}",
+                "host_id": event.host_id,
+                "more_details": more_details,
+                "has_document": bool(event.document_path)
             })
         
         return result
@@ -62,13 +72,13 @@ def get_all_available_events() -> list:
 @tool
 def get_user_bookings(authenticated_user_id: int) -> list:
     """
-    Get all your bookings.
+    Get all your bookings with event details including document links.
     
     Args:
         authenticated_user_id: Your user ID
     
     Returns:
-        List of your bookings
+        List of your bookings with event details
     """
     db = SessionLocal()
     try:
@@ -79,11 +89,29 @@ def get_user_bookings(authenticated_user_id: int) -> list:
         result = []
         for b in bookings:
             event = db.query(Events).filter(Events.id == b.event_id).first()
+            
+            # Get payment amount
+            payment = db.query(BookingPayments).filter(
+                BookingPayments.booking_id == b.id
+            ).first()
+            
+            # Create more_details URL if document exists
+            more_details = None
+            if event and event.document_path:
+                filename = os.path.basename(event.document_path)
+                more_details = f"/uploads/{filename}"
+            
             result.append({
                 "booking_id": b.id,
                 "event_id": b.event_id,
                 "event_title": event.title if event else "Unknown",
+                "event_venue": event.venue if event else "Unknown",
+                "event_date": str(event.date) if event else "Unknown",
                 "ticket_count": b.ticket_count,
+                "ticket_price": event.ticket_price if event else 0,
+                "total_amount": payment.amount if payment else (event.ticket_price * b.ticket_count if event else 0),
+                "more_details": more_details,
+                "has_document": bool(event and event.document_path),
                 "booking_date": str(b.created_at) if hasattr(b, 'created_at') else None
             })
         
@@ -171,10 +199,7 @@ def cancel_user_booking(booking_id: int, authenticated_user_id: int) -> dict:
     """
     db = SessionLocal()
     try:
-        booking = db.query(Bookings).filter(
-            Bookings.id == booking_id,
-            Bookings.user_id == authenticated_user_id
-        ).first()
+        booking = db.query(Bookings).filter(Bookings.id == booking_id, Bookings.user_id == authenticated_user_id).first()
         
         if not booking:
             return {"error": "Booking not found"}
@@ -183,20 +208,38 @@ def cancel_user_booking(booking_id: int, authenticated_user_id: int) -> dict:
         if not event:
             return {"error": "Event not found"}
         
-        # Refund (ticket price from event)
-        wallet = db.query(Wallets).filter(
-            Wallets.owner_type == "user",
-            Wallets.owner_id == authenticated_user_id
+        # Find the payment record
+        payment = db.query(BookingPayments).filter(
+            BookingPayments.booking_id == booking.id
         ).first()
         
-        if wallet:
-            wallet.balance += event.ticket_price
+        if not payment:
+            return {"error": "Payment record not found"}
         
+        # Refund user wallet
+        wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == authenticated_user_id).first()
+        
+        if wallet:
+            wallet.balance += payment.amount
+        
+        host = db.query(Hosts).filter(Hosts.id == event.host_id).first()
+        if host:
+            host_wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == host.id).first()
+            if host_wallet:
+                host_wallet.balance -= payment.amount
+        
+        # Update event seats
         event.available_seats += booking.ticket_count
+        
+        # Delete booking and payment
+        db.delete(payment)
         db.delete(booking)
         db.commit()
         
-        return {"message": f"Booking cancelled. ₹{event.ticket_price} refunded."}
+        return {
+            "message": f"Booking cancelled. ₹{payment.amount} refunded.",
+            "refund_amount": payment.amount
+        }
     except Exception as e:
         db.rollback()
         return {"error": str(e)}

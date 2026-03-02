@@ -3,3 +3,9 @@ uploads/
 __pycache__/
 .env
 vector_store/
+.dockerignore
+docker-compose.yaml
+Dockerfile
+start.sh
+wait_ollama.sh
+.gitignore

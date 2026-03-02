@@ -137,7 +137,13 @@ def smart_tabs(tab_list, key="tab"):
     if key not in st.session_state:
         st.session_state[key] = tab_list[0]
     
-    selected = st.radio("", tab_list, horizontal=True)
+    # Add a label and hide it
+    selected = st.radio(
+        "Navigation",  # Add a label
+        tab_list, 
+        horizontal=True,
+        label_visibility="collapsed"  # Hide it visually
+    )
     
     if selected != st.session_state[key]:
         st.session_state[key] = selected
@@ -527,6 +533,7 @@ def host_dashboard():
                         new_price = st.number_input("Ticket Price", value=e.get('ticket_price', 1), min_value=1)
                         
                         if st.form_submit_button("Save Changes"):
+                            # In app.py, change the update request:
                             update_data = {
                                 "title": new_title,
                                 "venue": new_venue,
@@ -534,11 +541,11 @@ def host_dashboard():
                                 "seats": new_seats,
                                 "ticket_price": new_price
                             }
-                            
+
                             upd_res = requests.put(
                                 f"{BASE_URL}/host/event/{e.get('id')}",
                                 headers=headers(),
-                                json=update_data
+                                json=update_data  
                             )
                             
                             if upd_res.status_code == 200:
@@ -706,7 +713,7 @@ def admin_dashboard():
                     e for e in events 
                     if e.get("host_email") == h.get("email") or e.get("host_id") == h.get("host_id") or e.get("host_id") == h.get("id")
                 ]
-                
+
                 if not host_events:
                     st.info("No events hosted")
                 else:
@@ -718,7 +725,7 @@ def admin_dashboard():
                             st.write(f"🎟 Seats: {e.get('available_seats', 0)} / {e.get('total_seats', 0)}")
                             st.write(f"💰 ₹{e.get('ticket_price', 0)}")
                             
-                            col1, col2 = st.columns(2)
+                            col1, col2, col3 = st.columns(3)
                             
                             with col1:
                                 if st.button("Delete Event", key=f"admin_del_event_{e.get('event_id')}"):
@@ -733,8 +740,15 @@ def admin_dashboard():
                                         st.error(del_res.text)
                             
                             with col2:
+                                # ADD THIS - View Document button
                                 if e.get("more_details"):
-                                    st.link_button("More Details", f"{BASE_URL}{e['more_details']}")
+                                    st.link_button(
+                                        "📄 View Document", 
+                                        f"{BASE_URL}{e['more_details']}",
+                                        use_container_width=True
+                                    )
+                                else:
+                                    st.write("No document")
                             
                             event_bookings = [
                                 b for b in bookings if b.get("event_id") == e.get("event_id")
@@ -765,25 +779,41 @@ def admin_dashboard():
         )
         
         if subtab == "Booking Transactions":
-            res = requests.get(f"{BASE_URL}/admin/booking-transactions", headers=headers_auth)
+            res = requests.get(f"{BASE_URL}/admin/bookings", headers=headers_auth)
             
             if res.status_code != 200:
-                st.error("Failed to fetch transactions")
+                st.error(f"Failed to fetch bookings: {res.text}")
                 return
             
-            tx_data = res.json()
-            transactions = tx_data.get("transactions", []) if isinstance(tx_data, dict) else (tx_data if isinstance(tx_data, list) else [])
+            data = res.json()
             
-            if not transactions:
-                st.info("No booking transactions")
+            # Handle response format
+            if isinstance(data, dict):
+                if "error" in data:
+                    st.error(data["error"])
+                    return
+                bookings = data.get("bookings", [])
+            elif isinstance(data, list):
+                bookings = data
             else:
-                for t in transactions:
+                bookings = []
+            
+            if not bookings:
+                st.info("No booking transactions found")
+            else:
+                st.write(f"**Total Bookings:** {len(bookings)}")
+                
+                for b in bookings:
                     with st.container(border=True):
-                        st.write(f"**Booking ID:** {t.get('booking_id', 'N/A')}")
-                        st.write(f"**Event:** {t.get('event_title', 'Unknown')}")
-                        st.write(f"**Amount:** ₹{t.get('amount', 0)}")
-                        st.write(f"**Status:** {t.get('status', 'Unknown')}")
-                        st.write(f"**Date:** {t.get('created_at', 'Unknown')}")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Booking ID:** {b.get('booking_id', 'N/A')}")
+                            st.write(f"**User:** {b.get('username', 'Unknown')}")
+                            st.write(f"**Email:** {b.get('user_email', 'N/A')}")
+                        with col2:
+                            st.write(f"**Event:** {b.get('event_title', 'Unknown')}")
+                            st.write(f"**Tickets:** {b.get('ticket_count', 0)}")
+                            st.write(f"**Amount:** ₹{b.get('total_amount', b.get('payment_amount', 0))}")
         
         else:  # Hosting Transactions
             res = requests.get(f"{BASE_URL}/admin/hosting-transactions", headers=headers_auth)

@@ -1,9 +1,6 @@
-version: "3.9"
-
 services:
-
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: event_postgres
     restart: always
     environment:
@@ -14,12 +11,35 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     container_name: event_redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: event_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   app:
     build: .
@@ -28,15 +48,30 @@ services:
       - "8000:8000"
       - "8501:8501"
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
       REDIS_URL: redis://redis:6379
-      SECRET_KEY: super-secret-key
-      ADMIN_SETUP_KEY: setup_admin_key
-      BASE_URL: http://backend:8000
+      OLLAMA_HOST: http://ollama:11434
+      SECRET_KEY: ${SECRET_KEY}
+      ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./vector_store:/app/vector_store
+    working_dir: /app
+    stdin_open: true
+    tty: true
 
 volumes:
   postgres_data:
-
+  ollama_data:

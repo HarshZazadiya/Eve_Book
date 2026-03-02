@@ -121,8 +121,7 @@ async def get_hosts_endpoint(admin : admin_dependency):
 
 
 @router.delete("/event/{event_id}")
-async def delete_event_endpoint(event_id : int,  admin : admin_dependency
-):
+async def delete_event_endpoint(event_id : int,  admin : admin_dependency):
     """
     Delete an event by ID and process refunds.
     Admin only.

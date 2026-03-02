@@ -21,6 +21,9 @@ import atexit
 import signal
 import sys
 
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
 
 # ============================================================

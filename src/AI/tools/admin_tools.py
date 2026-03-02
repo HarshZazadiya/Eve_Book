@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from langchain_core.tools import tool
 from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments, HostingPayments, HostPromotions
 import os
-from typing import Optional
 from database import SessionLocal
 
 # ==================================================
@@ -344,6 +343,7 @@ def get_all_events(admin_id: int) -> dict:
                 "host_company": host.company_name if host else None,
                 "host_email": host.email if host else None,
                 "host_username": host_user.username if host_user else None,
+                "more_details": f"/uploads/{event.document_path}" if event.document_path else None,
                 "document_available": bool(event.document_path)
             })
         
@@ -385,6 +385,7 @@ def get_all_bookings(admin_id: int) -> dict:
                 "username": user.username if user else "Unknown",
                 "user_email": user.email if user else "Unknown",
                 "event_id": b.event_id,
+                "total_amount" : event.ticket_price * b.ticket_count,
                 "event_title": event.title if event else "Unknown",
                 "ticket_count": b.ticket_count
             })

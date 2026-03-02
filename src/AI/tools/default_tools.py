@@ -1,19 +1,18 @@
-# AI/tools/default_tools.py
 from langchain_core.tools import tool
 from database import SessionLocal
 from model import Users, Hosts, Wallets
 import os
-from redis.asyncio import Redis
+import redis
 
 REDIS_URL = os.getenv("REDIS_URL")
-redis_client = Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 @tool
 def get_wallet_balance(authenticated_user_id: int, authenticated_user_type: str = None) -> dict:
     """
     Get your current wallet balance.
     Works for both users and hosts.
-    
+    REMEBER THE CURRENCY IS IN INR (₹).
     Args:
         authenticated_user_id: Your authenticated ID
         authenticated_user_type: Your role ('user', 'host', or 'admin')
@@ -66,7 +65,8 @@ def get_wallet_balance(authenticated_user_id: int, authenticated_user_type: str 
 def top_up_wallet(amount: int, authenticated_user_id: int, authenticated_user_type: str = None) -> dict:
     """
     Add money to your wallet.
-    
+    REMEBER THE CURRENCY IS IN INR (₹).
+
     Args:
         amount: Amount to add (positive number)
         authenticated_user_id: Your authenticated ID

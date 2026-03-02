@@ -9,11 +9,6 @@ import os
 import shutil
 from datetime import datetime
 from pydantic import BaseModel
-
-class PaymentRequest(BaseModel):
-    amount: int
-
-# Import AI tools
 from AI.tools.host_tools import (
     get_host_info,
     get_host_events,
@@ -44,6 +39,13 @@ host_dependency = Annotated[Hosts, Depends(get_current_host)]
 
 class PaymentRequest(BaseModel):
     amount : int
+
+class EventUpdateRequest(BaseModel):
+    title: str
+    venue: str
+    date: str
+    seats: int
+    ticket_price: int
 # --------------------------------------------------
 # HOST INFO
 # --------------------------------------------------
@@ -141,24 +143,16 @@ async def delete_event(host: host_dependency, event_id: int):
 # UPDATE EVENT
 # --------------------------------------------------
 @router.put("/event/{event_id}")
-async def update_event(
-    event_id: int,
-    host: host_dependency,
-    title: str = Form(...),
-    venue: str = Form(...),
-    date: str = Form(...),
-    seats: int = Form(...),
-    ticket_price: int = Form(...)
-):
+async def update_event(event_id: int, event_data: EventUpdateRequest, host: host_dependency):
     """Update event details"""
     result = update_host_event.invoke({
         "host_id": host.id,
         "event_id": event_id,
-        "title": title,
-        "venue": venue,
-        "date": date,
-        "seats": seats,
-        "ticket_price": ticket_price
+        "title": event_data.title,
+        "venue": event_data.venue,
+        "date": event_data.date,
+        "seats": event_data.seats,
+        "ticket_price": event_data.ticket_price
     })
     
     if "error" in result:
@@ -170,11 +164,7 @@ async def update_event(
 # UPDATE EVENT DOCUMENT
 # --------------------------------------------------
 @router.put("/event_document/{event_id}")
-async def update_document(
-    event_id: int,
-    host: host_dependency,
-    document: UploadFile = File(...)
-):
+async def update_document(event_id: int, host: host_dependency, document: UploadFile = File(...)):
     """Update just the document for an event"""
     
     # Validate file type

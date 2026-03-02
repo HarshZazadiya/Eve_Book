@@ -204,35 +204,50 @@ def delete_event_documents(event_id: int) -> bool:
         print(f"🗑️ Deleting documents for event {event_id}")
         
         store = get_vector_store()
-        all_docs = store.docstore._dict.values()
         
+        # Get all documents
+        all_docs = list(store.docstore._dict.values())
+        
+        # Filter out docs from this event
         docs_to_keep = []
+        docs_deleted = 0
+        
         for doc in all_docs:
             if doc.metadata.get("event_id") != event_id:
                 docs_to_keep.append(doc)
+            else:
+                docs_deleted += 1
         
-        if len(docs_to_keep) == len(all_docs):
+        if docs_deleted == 0:
             print(f"ℹ️ No documents found for event {event_id}")
             return True
         
+        print(f"📊 Found {docs_deleted} chunks for event {event_id}")
+        
+        # Rebuild index with remaining docs
         if docs_to_keep:
-            print(f"📊 Rebuilding index with {len(docs_to_keep)} documents...")
+            print(f"📊 Rebuilding index with {len(docs_to_keep)} remaining documents...")
             new_store = FAISS.from_documents(docs_to_keep, embeddings)
         else:
             print("📊 No documents left, creating empty store")
             new_store = FAISS.from_texts(["No documents available"], embeddings)
         
+        # Save new store
         new_store.save_local(str(FAISS_INDEX_PATH))
+        
+        # Update global store
         global vector_store
         vector_store = new_store
         
-        print(f"✅ Deleted documents for event {event_id}")
+        print(f"✅ Deleted {docs_deleted} documents for event {event_id}")
         return True
         
     except Exception as e:
         print(f"❌ Error deleting documents: {e}")
+        import traceback
+        traceback.print_exc()
         return False
-
+    
 # ============================================================
 # DOCUMENT SEARCH
 # ============================================================
