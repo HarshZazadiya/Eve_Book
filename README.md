@@ -208,7 +208,7 @@ Service	URL
 ```bash
 Streamlit Frontend      : http://localhost:8501
 FastAPI Backend         : http://localhost:8000
-API Documentation	      : http://localhost:8000/docs
+API Documentation	    : http://localhost:8000/docs
 ````
 
 ---
