@@ -124,6 +124,7 @@ def get_user_bookings(authenticated_user_id: int) -> list:
 def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
     """
     Book a ticket for an event.
+    ONLY BOOKS 1 EVENT AT A TIME, FOR GIVEN EVENT_ID
     
     Args:
         event_id: ID of event to book
@@ -172,6 +173,17 @@ def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
         db.add(booking)
         db.commit()
         db.refresh(booking)
+
+        booking_payment = BookingPayments(
+            booking_id = booking.id,
+            user_id = authenticated_user_id,
+            amount = event.ticket_price,
+            status = "successful",
+
+        )
+        db.add(booking_payment)
+        db.commit()
+        db.refresh(booking_payment)
         
         return {
             "message": f"Successfully booked {event.title}",

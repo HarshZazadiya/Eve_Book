@@ -118,7 +118,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db: Session = D
         return {
             "access_token": create_access_token(user.id, "user", user.role),
             "token_type": "bearer",
-            "type": "user"
+            "type": "user",
+            "id" : user.id,
+            "role" : user.role,
+            "name" : user.username,
+            "owner_type" : user.role,
         }
 
     host = authenticate_host(form_data.username, form_data.password, db)
@@ -126,7 +130,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db: Session = D
         return {
             "access_token": create_access_token(host.id, "host", "host"),
             "token_type": "bearer",
-            "type": "host"
+            "type": "host",
+            "id" : host.id,
+            "role" : "host",
+            "name" : host.company_name,
+            "owner_type" : "host",
         }
 
     raise HTTPException(status_code=401, detail="Invalid credentials")

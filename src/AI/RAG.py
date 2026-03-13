@@ -1,18 +1,12 @@
 import os
 import shutil
-import re
 from pathlib import Path
-from typing import Optional, List
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.messages import HumanMessage, SystemMessage
-import sys
 import atexit
-
-# Add parent directory to path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+from langchain_core.tools import tool
 
 # ============================================================
 # CONFIGURATION
@@ -29,12 +23,15 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Initialize LLM and embeddings
 print("🔄 Initializing Ollama...")
 llm = ChatOllama(
-        model = "llama3.1:8b",
-        temperature = 0.1
-    )
-embeddings = OllamaEmbeddings(
-                model = "nomic-embed-text"
-            )
+    model="llama3.1:8b",
+    temperature=0,
+    num_predict=2048,
+    top_k=10,
+    top_p=0.9,
+    repeat_penalty=1.1
+)
+
+embeddings = OllamaEmbeddings(model="nomic-embed-text")
 print("✅ Ollama ready")
 
 # Global vector store
@@ -52,19 +49,16 @@ def cleanup_vector_store():
             print("✅ Deleted FAISS index")
         except Exception as e:
             print(f"⚠️ Error deleting: {e}")
-    else:
-        print("ℹ️ No index to delete")
 
-atexit.register(cleanup_vector_store)
 
 # ============================================================
-# EXTRACT EVENT ID
+# EXTRACT EVENT ID FROM FILENAME
 # ============================================================
 def extract_event_id_from_filename(filename: str) -> int:
-    """Extract event_id from filename Example :  '1_2_Seminar.pdf'"""
+    """Extract event_id from filename (format: hostId_eventId_name.pdf)"""
     try:
         parts = Path(filename).stem.split('_')
-        if len(parts) >= 2 :
+        if len(parts) >= 2:
             return int(parts[1])
     except:
         pass
@@ -74,8 +68,8 @@ def extract_event_id_from_filename(filename: str) -> int:
 # BUILD FRESH VECTOR STORE
 # ============================================================
 def build_fresh_vector_store():
-    """Build NEW FAISS index from ALL documents"""
-    print("🔨 Building FRESH vector store...")
+    """Build NEW FAISS index from ALL documents on app start"""
+    print("🔨 Building FRESH vector store from all documents...")
     
     # Delete old index if exists
     if FAISS_INDEX_PATH.exists():
@@ -96,7 +90,7 @@ def build_fresh_vector_store():
     for pdf_path in pdf_files:
         try:
             event_id = extract_event_id_from_filename(pdf_path.name)
-            print(f"  Processing : {pdf_path.name} (event_id : {event_id})")
+            print(f"  Processing: {pdf_path.name} (event_id: {event_id})")
             
             # Load PDF
             loader = PyPDFLoader(str(pdf_path))
@@ -107,8 +101,8 @@ def build_fresh_vector_store():
             
             # Split into chunks
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size = 300,
-                chunk_overlap = 30
+                chunk_size=300,
+                chunk_overlap=30
             )
             chunks = text_splitter.split_documents(documents)
             
@@ -116,13 +110,12 @@ def build_fresh_vector_store():
             for chunk in chunks:
                 chunk.metadata["event_id"] = event_id
                 chunk.metadata["source"] = pdf_path.name
-                chunk.metadata["event_name"] = pdf_path.stem
             
             all_chunks.extend(chunks)
             print(f"    Added {len(chunks)} chunks")
             
         except Exception as e:
-            print(f"    ❌ Error: {e}")
+            print(f"    ❌ Error processing {pdf_path.name}: {e}")
     
     if not all_chunks:
         store = FAISS.from_texts(["No content available"], embeddings)
@@ -131,7 +124,7 @@ def build_fresh_vector_store():
         store = FAISS.from_documents(all_chunks, embeddings)
     
     store.save_local(str(FAISS_INDEX_PATH))
-    print(f"✅ Saved with {store.index.ntotal} vectors")
+    print(f"✅ Saved vector store with {store.index.ntotal} vectors")
     return store
 
 # ============================================================
@@ -147,8 +140,8 @@ def get_vector_store():
     
     try:
         vector_store = FAISS.load_local(
-            str(FAISS_INDEX_PATH), 
-            embeddings, 
+            str(FAISS_INDEX_PATH),
+            embeddings,
             allow_dangerous_deserialization=True
         )
         return vector_store
@@ -156,17 +149,14 @@ def get_vector_store():
         vector_store = build_fresh_vector_store()
         return vector_store
 
-# Initialize
-print("🚀 Initializing...")
-vector_store = get_vector_store()
 
 # ============================================================
-# PROCESS NEW DOCUMENT
+# ADD DOCUMENT TO VECTOR STORE
 # ============================================================
-def process_event_document(event_id : int, pdf_path : str) -> bool:
-    """Add a new document to vector store"""
+def add_document_to_store(event_id: int, pdf_path: str) -> bool:
+    """Add a new document to vector store (called when host uploads)"""
     try:
-        print(f"📄 Adding event {event_id} : {os.path.basename(pdf_path)}")
+        print(f"📄 Adding document for event {event_id}: {os.path.basename(pdf_path)}")
         
         loader = PyPDFLoader(pdf_path)
         documents = loader.load()
@@ -175,9 +165,9 @@ def process_event_document(event_id : int, pdf_path : str) -> bool:
             return False
         
         text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size = 300, 
-                            chunk_overlap = 30
-                        )
+            chunk_size=300,
+            chunk_overlap=30
+        )
         chunks = text_splitter.split_documents(documents)
         
         for chunk in chunks:
@@ -188,15 +178,15 @@ def process_event_document(event_id : int, pdf_path : str) -> bool:
         store.add_documents(chunks)
         store.save_local(str(FAISS_INDEX_PATH))
         
-        print(f"✅ Added {len(chunks)} chunks")
+        print(f"✅ Added {len(chunks)} chunks for event {event_id}")
         return True
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error adding document: {e}")
         return False
 
 # ============================================================
-# DELETE EVENT DOCUMENTS
+# DELETE DOCUMENTS FROM VECTOR STORE
 # ============================================================
 def delete_event_documents(event_id: int) -> bool:
     """Delete all documents for a specific event from vector store"""
@@ -232,103 +222,63 @@ def delete_event_documents(event_id: int) -> bool:
             print("📊 No documents left, creating empty store")
             new_store = FAISS.from_texts(["No documents available"], embeddings)
         
-        # Save new store
         new_store.save_local(str(FAISS_INDEX_PATH))
         
         # Update global store
         global vector_store
         vector_store = new_store
         
-        print(f"✅ Deleted {docs_deleted} documents for event {event_id}")
+        print(f"✅ Deleted {docs_deleted} chunks for event {event_id}")
         return True
         
     except Exception as e:
         print(f"❌ Error deleting documents: {e}")
-        import traceback
-        traceback.print_exc()
         return False
+
+# ============================================================
+# SEARCH DOCUMENTS (for RAG)
+# ============================================================
+@tool
+def search_documents(query: str, k: int = 3) -> str:
+    """Search for relevant documents and return formatted results
+    - Use this tool to search for relevant documents in the vector store
+    - IF user asks about something related to event which is not from this fields
+        [ EVENT ID, NAME/TITLE, DATE, PRICE, LOCATION/VENUE, TOTAL SEATS, AVAILABLE SEATS ]
+        THEN use this tool to search for relevant documents
+    ARGS :
+        query (str) : Query to search for
+        k (int) : Number of results to return
     
-# ============================================================
-# DOCUMENT SEARCH
-# ============================================================
-def search_documents_strict(query: str, k: int = 3) -> str:
-    """
-    Search for documents with strict matching - only return exact matches
+    RETURNS :
+        Formatted results
     """
     try:
         store = get_vector_store()
         
-        if store.index.ntotal <= 1:
+        if store.index.ntotal <= 1:  # Only has the placeholder
             return ""
         
-        docs = store.similarity_search(query, k=k*2)
+        docs = store.similarity_search(query, k=k)
         
         if not docs:
             return ""
         
-        query_terms = query.lower().split()
-        relevant_docs = []
-        
-        for doc in docs:
-            content_lower = doc.page_content.lower()
-            significant_terms = [t for t in query_terms if len(t) > 3]
-            if not significant_terms:
-                significant_terms = query_terms
-            
-            if any(term in content_lower for term in significant_terms):
-                relevant_docs.append(doc)
-        
-        if not relevant_docs:
-            return ""
-        
         result = []
-        for i, doc in enumerate(relevant_docs[:k], 1):
-            event_id = doc.metadata.get("event_id", "?")
+        for i, doc in enumerate(docs, 1):
+            event_id = doc.metadata.get("event_id", "Unknown")
             source = doc.metadata.get("source", "Unknown")
             content = doc.page_content.strip()
-            content = re.sub(r'\s+', ' ', content)
             
-            result.append(f"[DOCUMENT {i} - Event {event_id}]\n{content}\n(Source: {source})")
+            result.append(
+                f"[Document {i} - Event {event_id}]\n"
+                f"{content}\n"
+                f"(Source: {source})"
+            )
         
         return "\n\n---\n\n".join(result)
         
     except Exception as e:
         print(f"Search error: {e}")
         return ""
-
-# ============================================================
-# MAIN SEARCH FUNCTION
-# ============================================================
-def search_documents(query: str, k: int = 5) -> str:
-    """Main search function with fallback"""
-    result = search_documents_strict(query, k)
-    if result:
-        return result
     
-    try:
-        store = get_vector_store()
-        docs = store.similarity_search(query, k=k)
-        
-        if not docs:
-            return ""
-        
-        result = ["⚠️ **Note**: These are similar documents but may not exactly match your query:\n"]
-        for i, doc in enumerate(docs[:k], 1):
-            event_id = doc.metadata.get("event_id", "?")
-            source = doc.metadata.get("source", "Unknown")
-            content = doc.page_content.strip()
-            content = re.sub(r'\s+', ' ', content)
-            result.append(f"[DOCUMENT {i} - Event {event_id}]\n{content}\n(Source : {source})")
-        
-        return "\n\n---\n\n".join(result)
-    except:
-        return ""
-
-# ============================================================
-# REBUILD INDEX
-# ============================================================
-def rebuild_index():
-    """Manually rebuild entire index"""
-    global vector_store
-    vector_store = build_fresh_vector_store()
-    return vector_store
+rag_tools = [search_documents]

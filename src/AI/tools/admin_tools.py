@@ -56,7 +56,7 @@ def promote_to_admin(email: str, setup_key: str, admin_id: int) -> dict:
         setup_key: Setup key for verification
         admin_id: ID of admin performing action (automatically provided)
     """
-    from main import ADMIN_SETUP_KEY
+    ADMIN_SETUP_KEY = os.environ.get("ADMIN_SETUP_KEY")
     from database import SessionLocal
     
     # Verify setup key

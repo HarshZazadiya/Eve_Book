@@ -8,7 +8,7 @@ import redis
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
-from AI.RAG import process_event_document, delete_event_documents
+from AI.RAG import add_document_to_store, build_fresh_vector_store, delete_event_documents
 
 # --------------------------------------------------
 # Configuration
@@ -213,7 +213,7 @@ def create_host_event(
             c.drawString(100, 760, f"Venue: {venue}")
             c.drawString(100, 740, f"Date: {date}")
             c.drawString(100, 720, f"Seats: {seats}")
-            c.drawString(100, 700, f"Price: ₹{ticket_price}")
+            c.drawString(100, 700, f"Price: INR {ticket_price}")
             c.save()
         
         # Update event with document path
@@ -221,7 +221,7 @@ def create_host_event(
         db.commit()
         
         # Add to vector store
-        process_event_document(event.id, file_path)
+        add_document_to_store(event.id, file_path)
         
         # Clear cache - simple delete, no asyncio
         if redis_client:
@@ -387,7 +387,7 @@ def update_host_event(
             db.commit()
             
             # STEP 5: Add to vector store
-            process_event_document(event_id, file_path)
+            add_document_to_store(event_id, file_path)
             print(f"✅ Added updated event {event_id} to vector store")
         
         # Clear Redis cache
@@ -447,7 +447,7 @@ def update_event_document(host_id: int, event_id: int, pdf_path: str) -> dict:
         db.commit()
         
         # Add to vector store
-        process_event_document(event_id, file_path)
+        add_document_to_store(event_id, file_path)
         
         return {"message": "Document updated successfully"}
         
