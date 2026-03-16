@@ -8,7 +8,7 @@ import redis
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
-from AI.RAG import add_document_to_store, build_fresh_vector_store, delete_event_documents
+from AI.RAG import add_document_to_store, delete_event_documents
 
 # --------------------------------------------------
 # Configuration

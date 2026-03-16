@@ -1,4 +1,3 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from langchain_core.tools import tool
 from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments, HostingPayments, HostPromotions

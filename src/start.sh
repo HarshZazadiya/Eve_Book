@@ -5,7 +5,6 @@ echo "========================================="
 echo "🚀 Starting EveBook Application"
 echo "========================================="
 echo "Current directory: $(pwd)"
-echo "Listing files:"
 ls -la
 
 # Wait for PostgreSQL
@@ -22,32 +21,7 @@ while ! nc -z redis 6379; do
 done
 echo "✅ Redis is ready"
 
-# Wait for Ollama
-echo "🤖 Waiting for Ollama..."
-until curl -s http://ollama:11434/api/tags > /dev/null; do
-  sleep 2
-done
-echo "✅ Ollama is ready"
-
-# Pull nomic-embed-text model for embeddings
-echo "📥 Checking for nomic-embed-text model..."
-if ! curl -s http://ollama:11434/api/tags | grep -q "nomic-embed-text"; then
-  echo "Downloading nomic-embed-text model..."
-  curl -X POST http://ollama:11434/api/pull -d '{"name": "nomic-embed-text"}'
-else
-  echo "✅ nomic-embed-text model already exists"
-fi
-
-# Pull Llama model if not present
-echo "📥 Checking for Llama 3.1 model..."
-if ! curl -s http://ollama:11434/api/tags | grep -q "llama3.1:8b"; then
-  echo "Downloading Llama 3.1 8B model (this may take a few minutes)..."
-  curl -X POST http://ollama:11434/api/pull -d '{"name": "llama3.1:8b"}'
-else
-  echo "✅ Llama 3.1 model already exists"
-fi
-
-# Initialize database
+# Initialize database tables
 echo "🗄️ Initializing database..."
 cd /app
 python -c "
@@ -58,13 +32,23 @@ Base.metadata.create_all(bind=engine)
 print('✅ Database tables created')
 "
 
+# Start MCP file handling server in background
+echo "🔌 Starting MCP file handling server..."
+cd /app/src/AI/local_mcp/file_handle
+python file_handling_server.py &
+MCP_PID=$!
+echo "✅ MCP server started (PID: $MCP_PID)"
+
+# Give MCP server a moment to start
+sleep 2
+
 # Start FastAPI backend
 echo "🖥️ Starting FastAPI backend..."
 cd /app
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
-# Wait for backend
+# Wait for backend to be ready
 echo "⏳ Waiting for backend to be ready..."
 sleep 5
 until curl -s http://localhost:8000/health > /dev/null; do
@@ -79,9 +63,10 @@ streamlit run app.py --server.port 8501 --server.address 0.0.0.0 &
 FRONTEND_PID=$!
 
 echo "========================================="
-echo "✅ All services started successfully!"
-echo "📊 FastAPI: http://localhost:8000"
-echo "📈 Streamlit: http://localhost:8501"
+echo "✅ All services started!"
+echo "📊 FastAPI:    http://localhost:8000"
+echo "📈 Streamlit:  http://localhost:8501"
+echo "🔌 MCP Server: http://localhost:8001"
 echo "========================================="
 
 wait $BACKEND_PID $FRONTEND_PID

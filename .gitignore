@@ -9,3 +9,4 @@ Dockerfile
 start.sh
 wait_ollama.sh
 .gitignore
+src/ai/local_mcp/file_handle/workspace/

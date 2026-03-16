@@ -1,6 +1,5 @@
 import os
 from langchain_core.tools import tool
-import json
 from database import SessionLocal
 from model import BookingPayments, Users, Events, Bookings, Wallets, Hosts, HostPromotions
 

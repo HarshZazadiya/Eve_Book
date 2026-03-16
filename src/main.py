@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from database import engine
 from database import Base
-from routers import auth, user, host
+from routers import auth, user, host, chatbot
 from model import Wallets
 from routers.host import db_dependency, PaymentRequest
 from jose import jwt, JWTError
@@ -13,16 +13,13 @@ from routers import admin
 import os
 from contextlib import asynccontextmanager
 from model import Users
-from routers.auth import bcrypt_context
+from routers.auth import bcrypt_context, get_current_user
 from fastapi.staticfiles import StaticFiles
-from AI import chatbot
 from AI.RAG import get_vector_store, cleanup_vector_store
+from AI.graph import init_checkpointer, close_checkpointer  # ✅ NEW
 import atexit
 import signal
 import sys
-
-
-# OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
 
@@ -37,10 +34,8 @@ def cleanup():
     except Exception as e:
         print(f"⚠️ Cleanup error: {e}")
 
-# Register cleanup for normal exit
 atexit.register(cleanup)
 
-# Handle signals for forced shutdown
 def signal_handler(sig, frame):
     print(f"\n⚠️ Received signal {sig}")
     cleanup()
@@ -52,25 +47,28 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP
+    # ── STARTUP ──────────────────────────────────────────────
     print("=" * 50)
     print("🚀 Application starting up...")
-    
+
     # 1. Initialize FAISS
     print("📚 Initializing vector store...")
     store = get_vector_store()
     print(f"✅ FAISS ready with {store.index.ntotal} vectors")
-    
-    # 2. Create default admin if none exists
+
+    # 2. Initialize async Postgres checkpointer  ✅ NEW
+    await init_checkpointer()
+
+    # 3. Create default admin if none exists
     db = SessionLocal()
     try:
-        admin = db.query(Users).filter(Users.role == "admin").first()
-        
-        if not admin:
+        existing_admin = db.query(Users).filter(Users.role == "admin").first()
+
+        if not existing_admin:
             username = os.getenv("DEFAULT_ADMIN_NAME", "admin")
-            email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@event.com")
+            email    = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@event.com")
             password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
-            
+
             default_admin = Users(
                 username=username,
                 email=email,
@@ -82,21 +80,22 @@ async def lifespan(app: FastAPI):
             print(f"✅ Default admin created: {email} / {password}")
         else:
             print("✅ Admin user already exists")
-            
+
     except Exception as e:
         print(f"⚠️ Error creating admin: {e}")
     finally:
         db.close()
-    
+
     print("✅ Startup complete")
     print("=" * 50)
-    
-    # APP RUNS HERE
+
+    # ── APP RUNS HERE ─────────────────────────────────────────
     yield
-    
-    # SHUTDOWN
+
+    # ── SHUTDOWN ──────────────────────────────────────────────
     print("\n" + "=" * 50)
     print("🛑 Application shutting down...")
+    await close_checkpointer()  # ✅ NEW
     cleanup()
     print("=" * 50)
 
@@ -113,7 +112,7 @@ app.include_router(host.router)
 app.include_router(admin.router)
 app.include_router(chatbot.router)
 
-# CONFIGURATION
+# ── CONFIGURATION ─────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -124,18 +123,33 @@ REDIS_URL = os.getenv("REDIS_URL")
 redis_client = Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "vector_store": get_vector_store().index.ntotal > 1
+    }
+
+
 @app.post("/topUp")
-async def top_up_wallet(db: db_dependency,  payment_request: PaymentRequest,  token: Annotated[str, Depends(oauth2_bearer)]):
+async def top_up_wallet(
+    db: db_dependency,
+    payment_request: PaymentRequest,
+    token: Annotated[str, Depends(oauth2_bearer)]
+):
     """Add money to wallet"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         owner_type = payload.get("type")
-        owner_id = payload.get("id")
+        owner_id   = payload.get("id")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    # Get or create wallet
-    wallet = db.query(Wallets).filter(Wallets.owner_type == owner_type,  Wallets.owner_id == owner_id).first()
+    wallet = db.query(Wallets).filter(
+        Wallets.owner_type == owner_type,
+        Wallets.owner_id   == owner_id
+    ).first()
 
     if wallet:
         wallet.balance += payment_request.amount
@@ -150,7 +164,6 @@ async def top_up_wallet(db: db_dependency,  payment_request: PaymentRequest,  to
     db.commit()
     db.refresh(wallet)
 
-    # Clear cache
     if redis_client:
         await redis_client.delete(f"wallet:{owner_type}:{owner_id}")
 
@@ -162,36 +175,32 @@ async def top_up_wallet(db: db_dependency,  payment_request: PaymentRequest,  to
 
 
 @app.get("/myWallet")
-async def get_my_wallet(db: db_dependency,  token: Annotated[str, Depends(oauth2_bearer)]):
+async def get_my_wallet(
+    db: db_dependency,
+    token: Annotated[str, Depends(oauth2_bearer)]
+):
     """Get current wallet balance"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         owner_type = payload.get("type")
-        owner_id = payload.get("id")
+        owner_id   = payload.get("id")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     if owner_type not in ("user", "host") or owner_id is None:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
-    wallet = db.query(Wallets).filter(Wallets.owner_type == owner_type,  Wallets.owner_id == owner_id).first()
+    wallet = db.query(Wallets).filter(
+        Wallets.owner_type == owner_type,
+        Wallets.owner_id   == owner_id
+    ).first()
 
     if not wallet:
         raise HTTPException(status_code=404, detail="Wallet not found")
-    
+
     response = {"balance": float(wallet.balance)}
-    
-    # Add warning for low balance hosts
+
     if owner_type == "host" and wallet.balance < 500:
         response["warning"] = "Low balance - need ₹500 to create events"
-    
+
     return response
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "vector_store": get_vector_store().index.ntotal > 1
-    }

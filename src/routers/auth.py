@@ -5,7 +5,6 @@ from datetime import timedelta, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from pydantic import BaseModel
-from starlette import status
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from database import SessionLocal

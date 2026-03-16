@@ -12,95 +12,156 @@ st.set_page_config(page_title="Event Booking Platform", layout="wide")
 # CHAT INTERFACE
 # =================================================
 def chat_interface():
-    """Chat interface component"""
-    st.header("💬 Chat with AI Assistant")
-    
-    # Initialize session state for chat
-    if "current_thread_id" not in st.session_state:
-        st.session_state.current_thread_id = None
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # Sidebar for thread management
+    """Chat interface with Human-in-the-Loop approval for sensitive actions"""
+
+    # ── session state init ──────────────────────────────────
+    for key, default in [
+        ("current_thread_id",   None),
+        ("messages",            []),
+        ("hitl_pending",        False),   # True while waiting for yes/no
+        ("hitl_last_message",   None),    # original user message that triggered HITL
+        ("hitl_tools",          []),      # tool names needing approval
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+    auth_headers = {"Authorization": f"Bearer {st.session_state.token}"}
+
+    # ── sidebar: thread list ─────────────────────────────────
     with st.sidebar:
-        st.subheader("Chat History")
-        
-        # New chat button
+        st.subheader("💬 Chat History")
         if st.button("➕ New Chat", use_container_width=True):
             st.session_state.current_thread_id = None
-            st.session_state.messages = []
+            st.session_state.messages          = []
+            st.session_state.hitl_pending      = False
+            st.session_state.hitl_last_message = None
             st.rerun()
-        
+
         st.divider()
-        
-        # Fetch user's threads
+
         try:
-            headers = {"Authorization": f"Bearer {st.session_state.token}"}
-            threads_res = requests.get(f"{BASE_URL}/chat/threads", headers=headers)
-            
+            threads_res = requests.get(f"{BASE_URL}/chat/threads", headers=auth_headers)
             if threads_res.status_code == 200:
-                threads = threads_res.json()
-                for thread in threads:
+                for thread in threads_res.json():
                     col1, col2 = st.columns([4, 1])
+                    preview_text = thread.get('last_message') or "Empty chat"
+                    preview = preview_text[:28] + "…" if len(preview_text) > 28 else preview_text
                     with col1:
-                        preview = (thread['last_message'] or "Empty chat")[:30] + "..." if thread.get('last_message') and len(thread['last_message']) > 30 else (thread['last_message'] or "Empty chat")
-                        if st.button(f"📝 {preview}", key=f"thread_{thread['id']}", use_container_width=True):
+                        if st.button(f"📝 {preview}", key=f"thread_{thread['id']}",
+                                     use_container_width=True):
                             st.session_state.current_thread_id = thread['id']
-                            # Load messages for this thread
-                            msgs_res = requests.get(f"{BASE_URL}/chat/threads/{thread['id']}/messages", headers=headers)
-                            if msgs_res.status_code == 200:
-                                st.session_state.messages = msgs_res.json()
+                            msgs_res = requests.get(
+                                f"{BASE_URL}/chat/threads/{thread['id']}/messages",
+                                headers=auth_headers
+                            )
+                            st.session_state.messages     = msgs_res.json() if msgs_res.status_code == 200 else []
+                            st.session_state.hitl_pending = False
                             st.rerun()
                     with col2:
                         if st.button("🗑️", key=f"del_{thread['id']}"):
-                            requests.delete(f"{BASE_URL}/chat/threads/{thread['id']}", headers=headers)
+                            requests.delete(f"{BASE_URL}/chat/threads/{thread['id']}",
+                                            headers=auth_headers)
                             if st.session_state.current_thread_id == thread['id']:
                                 st.session_state.current_thread_id = None
-                                st.session_state.messages = []
+                                st.session_state.messages          = []
+                                st.session_state.hitl_pending      = False
                             st.rerun()
         except Exception as e:
-            st.error(f"Error loading chat threads: {e}")
-    
-    # Display chat messages
+            st.error(f"Error loading threads: {e}")
+
+    # ── message history ──────────────────────────────────────
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-    
-    # Chat input
-    if prompt := st.chat_input("Ask me about events..."):
-        # Add user message to UI
+        with st.chat_message(msg.get("role", "user")):
+            st.markdown(msg.get("content", ""))
+
+    # ── HITL approval UI ─────────────────────────────────────
+    # When hitl_pending is True we show YES/NO buttons instead of the text input.
+    if st.session_state.hitl_pending:
+        tools_str = ", ".join(f"`{t}`" for t in st.session_state.hitl_tools)
+        st.warning(f"⚠️ Waiting for your approval to run: {tools_str}")
+
+        col_yes, col_no, _ = st.columns([1, 1, 4])
+        approved = None
+        with col_yes:
+            if st.button("✅ Yes, proceed", use_container_width=True, type="primary"):
+                approved = "yes"
+        with col_no:
+            if st.button("❌ No, cancel", use_container_width=True):
+                approved = "no"
+
+        if approved is not None:
+            with st.spinner("Processing your decision…"):
+                try:
+                    resp = requests.post(
+                        f"{BASE_URL}/chat/ask",
+                        headers=auth_headers,
+                        json={
+                            "message":          st.session_state.hitl_last_message,
+                            "thread_id":        st.session_state.current_thread_id,
+                            "human_approval":   approved,
+                        },
+                        timeout=60,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        st.session_state.current_thread_id = data["thread_id"]
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": data["response"]}
+                        )
+                    else:
+                        st.error(f"HTTP {resp.status_code}: {resp.text}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    st.session_state.hitl_pending      = False
+                    st.session_state.hitl_last_message = None
+                    st.session_state.hitl_tools        = []
+            st.rerun()
+        return   # don't show chat input while waiting for approval
+
+    # ── normal chat input ────────────────────────────────────
+    if prompt := st.chat_input("Ask me about events…"):
         with st.chat_message("user"):
-            st.write(prompt)
-        
-        # Add to session state
+            st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        # Send to API
+
         try:
-            headers = {"Authorization": f"Bearer {st.session_state.token}"}
-            response = requests.post(
-                f"{BASE_URL}/chat/ask",
-                headers=headers,
-                json={
-                    "message": prompt,
-                    "thread_id": st.session_state.current_thread_id
-                }
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Update thread ID for subsequent messages
+            with st.spinner("Thinking…"):
+                resp = requests.post(
+                    f"{BASE_URL}/chat/ask",
+                    headers=auth_headers,
+                    json={
+                        "message":   prompt,
+                        "thread_id": st.session_state.current_thread_id,
+                    },
+                    timeout=60,
+                )
+
+            if resp.status_code == 200:
+                data = resp.json()
                 st.session_state.current_thread_id = data["thread_id"]
-                
-                # Add assistant response to UI
-                with st.chat_message("assistant"):
-                    st.write(data["response"])
-                
-                # Add to session state
-                st.session_state.messages.append({"role": "assistant", "content": data["response"]})
+                ai_text = data.get("response", "")
+
+                # ── HITL triggered ────────────────────────────
+                if data.get("hitl_required"):
+                    st.session_state.hitl_pending      = True
+                    st.session_state.hitl_last_message = prompt
+                    st.session_state.hitl_tools        = data.get("hitl_tools") or []
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": ai_text}
+                    )
+                    st.rerun()
+                else:
+                    with st.chat_message("assistant"):
+                        st.markdown(ai_text)
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": ai_text}
+                    )
             else:
-                st.error(f"Failed to get response: {response.status_code}")
+                st.error(f"HTTP {resp.status_code}: {resp.text}")
+
+        except requests.exceptions.Timeout:
+            st.error("⏱️ Request timed out")
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -130,7 +191,7 @@ def detect_role():
     
     if data.get("role") == "admin":
         return "admin"
-    return data.get("type")
+    return data.get("type") or data.get("role") or "user"
 
 # ---------------- SMART TABS ----------------
 def smart_tabs(tab_list, key="tab"):

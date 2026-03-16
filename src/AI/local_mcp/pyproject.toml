@@ -1,11 +1,12 @@
 [project]
 name = "local-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local MCPs for chatbot"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=3.1.0",
     "pdfreader>=0.1.15",
     "pypdf>=6.8.0",
+    "reportlab>=4.4.10",
 ]

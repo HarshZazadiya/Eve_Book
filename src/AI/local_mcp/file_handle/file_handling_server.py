@@ -230,7 +230,7 @@ def create_pdf(filename: str, content: str) -> str:
     return output_path
       
 @mcp.tool()
-def create_text_file(filename: str, content: str) -> str:
+def create_file(filename: str, content: str) -> str:
     """Create a normal file with the given"""
     
     filepath = WORKSPACE / filename
@@ -242,6 +242,74 @@ def create_text_file(filename: str, content: str) -> str:
                 📝 Content: {content[:200]}
             """
 
+@mcp.tool()
+def update_pdf(filename: str, new_content: str, mode: str = "append") -> str:
+    """
+    Updates an existing PDF file in the WORKSPACE directory.
+
+    Args:
+        filename: Name of the PDF file to update (with or without .pdf extension)
+        new_content: Text content to add or use as replacement
+        mode: How to update the PDF:
+              "append"  - Add new_content after existing content (default)
+              "prepend" - Add new_content before existing content
+              "replace" - Overwrite the entire PDF with new_content
+
+    Returns:
+        Full path to the updated PDF file
+    """
+    import os
+    from pypdf import PdfReader
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    if not filename.endswith(".pdf"):
+        filename += ".pdf"
+
+    output_path = os.path.join(WORKSPACE, filename)
+
+    if not os.path.exists(output_path):
+        raise FileNotFoundError(f"PDF not found: {output_path}")
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    def content_to_story(text: str) -> list:
+        """Convert plain text into ReportLab flowables."""
+        flowables = []
+        for line in text.split("\n"):
+            if line.strip():
+                flowables.append(Paragraph(line, styles["Normal"]))
+            else:
+                flowables.append(Spacer(1, 12))
+        return flowables
+
+    if mode == "replace":
+        # Rebuild the PDF entirely with new_content
+        story = content_to_story(new_content)
+
+    else:
+        # Extract existing text from the current PDF
+        reader = PdfReader(output_path)
+        existing_text = "\n".join(
+            page.extract_text() or "" for page in reader.pages
+        )
+
+        if mode == "append":
+            combined = existing_text + "\n\n" + new_content
+        elif mode == "prepend":
+            combined = new_content + "\n\n" + existing_text
+        else:
+            raise ValueError(f"Invalid mode '{mode}'. Use 'append', 'prepend', or 'replace'.")
+
+        story = content_to_story(combined)
+
+    # Write the updated PDF back to the same path
+    doc = SimpleDocTemplate(output_path, pagesize=letter)
+    doc.build(story)
+
+    return f"❌ Failed to update PDF file: {output_path}"
 
 @mcp.tool()
 def update_file(filename: str, content: str, is_base64: bool = False) -> str:
@@ -361,4 +429,6 @@ if __name__ == "__main__":
     mcp.run(transport="sse", host="127.0.0.1", port=8001)
 
 
-    
+# if __name__ == "__main__":
+#     print("🚀 File System MCP Server Starting...")
+#     mcp.run()    
