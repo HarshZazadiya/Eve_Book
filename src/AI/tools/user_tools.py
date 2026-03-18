@@ -292,7 +292,9 @@ def promote_user_to_host(authenticated_user_id: int) -> dict:
         # Process promotion
         wallet.balance -= PROMOTION_FEE
         user.role = "host"
-        
+        admin_wallet  = db.query(Wallets).filter(Wallets.owner_type == "admin").first()
+        if admin_wallet:
+            admin_wallet.balance += PROMOTION_FEE
         # Create host record
         new_host = Hosts(
             company_name=user.username,

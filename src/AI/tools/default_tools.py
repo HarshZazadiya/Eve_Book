@@ -29,10 +29,7 @@ def get_wallet_balance(authenticated_user_id: int, authenticated_user_type: str 
             if not host:
                 return {"error": "Host not found"}
             
-            wallet = db.query(Wallets).filter(
-                Wallets.owner_type == "host",
-                Wallets.owner_id == authenticated_user_id
-            ).first()
+            wallet = db.query(Wallets).filter(Wallets.owner_type == "host", Wallets.owner_id == authenticated_user_id).first()
             
             balance = wallet.balance if wallet else 0
             result = {"balance": balance}
@@ -46,10 +43,7 @@ def get_wallet_balance(authenticated_user_id: int, authenticated_user_type: str 
             if not user:
                 return {"error": "User not found"}
             
-            wallet = db.query(Wallets).filter(
-                Wallets.owner_type == "user",
-                Wallets.owner_id == authenticated_user_id
-            ).first()
+            wallet = db.query(Wallets).filter(Wallets.owner_type == "user", Wallets.owner_id == authenticated_user_id).first()
             
             balance = wallet.balance if wallet else 0
             result = {"balance": balance}
@@ -89,18 +83,15 @@ def top_up_wallet(amount: int, authenticated_user_id: int, authenticated_user_ty
             owner_id = authenticated_user_id
         
         # Get or create wallet
-        wallet = db.query(Wallets).filter(
-            Wallets.owner_type == owner_type,
-            Wallets.owner_id == owner_id
-        ).first()
+        wallet = db.query(Wallets).filter(Wallets.owner_type == owner_type, Wallets.owner_id == owner_id).first()
 
         if wallet:
             wallet.balance += amount
         else:
             wallet = Wallets(
-                owner_type=owner_type,
-                owner_id=owner_id,
-                balance=amount
+                owner_type = owner_type,
+                owner_id = owner_id,
+                balance = amount
             )
             db.add(wallet)
 
@@ -108,8 +99,8 @@ def top_up_wallet(amount: int, authenticated_user_id: int, authenticated_user_ty
         db.refresh(wallet)
 
         return {
-            "balance": wallet.balance,
-            "message": f"Wallet topped up with ₹{amount}"
+            "balance" : wallet.balance,
+            "message" : f"Wallet topped up with ₹{amount}"
         }
     except Exception as e:
         db.rollback()

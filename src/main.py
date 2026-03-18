@@ -1,27 +1,27 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI
+from Eve_Book.src.routers import wallets
 from database import engine
 from database import Base
-from routers import auth, user, host, chatbot
+from routers import auth, user, host, chatbot, wallets
 from model import Wallets
-from routers.host import db_dependency, PaymentRequest
-from jose import jwt, JWTError
-from typing import Annotated
-from fastapi.security import OAuth2PasswordBearer
 from database import SessionLocal
 from redis.asyncio import Redis
 from routers import admin
 import os
 from contextlib import asynccontextmanager
 from model import Users
-from routers.auth import bcrypt_context, get_current_user
+from routers.auth import bcrypt_context
 from fastapi.staticfiles import StaticFiles
 from AI.RAG import get_vector_store, cleanup_vector_store
-from AI.graph import init_checkpointer, close_checkpointer  # ✅ NEW
+from AI.graph import init_checkpointer, close_checkpointer
 import atexit
 import signal
 import sys
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
+
+# Global Redis client
+redis_client = None
 
 # ============================================================
 # CLEANUP FUNCTION
@@ -56,28 +56,59 @@ async def lifespan(app: FastAPI):
     store = get_vector_store()
     print(f"✅ FAISS ready with {store.index.ntotal} vectors")
 
-    # 2. Initialize async Postgres checkpointer  ✅ NEW
+    # 2. Initialize Redis with connection test (INSIDE lifespan function)
+    global redis_client
+    REDIS_URL = os.getenv("REDIS_URL")
+    if REDIS_URL:
+        try:
+            # Try to create Redis client with timeout
+            test_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+            
+            # Test the connection - THIS IS NOW INSIDE AN ASYNC FUNCTION
+            await test_client.ping()
+            redis_client = test_client
+            print(f"✅ Redis connected successfully to {REDIS_URL}")
+        except Exception as e:
+            print(f"⚠️ Redis connection failed: {e}")
+            print("⚠️ Redis caching disabled - wallet will still work")
+            redis_client = None
+    else:
+        print("⚠️ REDIS_URL not set, Redis caching disabled")
+        redis_client = None
+
+    # 3. Initialize async Postgres checkpointer
     await init_checkpointer()
 
-    # 3. Create default admin if none exists
+    # 4. Create default admin if none exists
     db = SessionLocal()
     try:
         existing_admin = db.query(Users).filter(Users.role == "admin").first()
-
-        if not existing_admin:
-            username = os.getenv("DEFAULT_ADMIN_NAME", "admin")
-            email    = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@event.com")
-            password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+        existing_wallet = db.query(Wallets).filter(Wallets.owner_type == "admin").first()
+        if not existing_wallet and not existing_admin:
+            print("⚠️ No admin user found, creating default admin...")
+            username = os.getenv("DEFAULT_ADMIN_NAME")
+            email    = os.getenv("DEFAULT_ADMIN_EMAIL")
+            password = os.getenv("DEFAULT_ADMIN_PASSWORD")
 
             default_admin = Users(
-                username=username,
-                email=email,
-                hashed_password=bcrypt_context.hash(password),
-                role="admin"
+                username = username,
+                email = email,
+                hashed_password = bcrypt_context.hash(password),
+                role = "admin"
             )
             db.add(default_admin)
             db.commit()
             print(f"✅ Default admin created: {email} / {password}")
+            
+            # Create admin wallet
+            admin_wallet = Wallets(
+                owner_type = "admin",
+                owner_id = default_admin.id,
+                balance = 0
+            )
+            db.add(admin_wallet)
+            db.commit()
+            print(f"✅ Default admin wallet created")
         else:
             print("✅ Admin user already exists")
 
@@ -95,7 +126,13 @@ async def lifespan(app: FastAPI):
     # ── SHUTDOWN ──────────────────────────────────────────────
     print("\n" + "=" * 50)
     print("🛑 Application shutting down...")
-    await close_checkpointer()  # ✅ NEW
+    
+    # Close Redis connection if it exists
+    if redis_client:
+        await redis_client.close()
+        print("🔒 Redis connection closed")
+    
+    await close_checkpointer()
     cleanup()
     print("=" * 50)
 
@@ -111,96 +148,13 @@ app.include_router(user.router)
 app.include_router(host.router)
 app.include_router(admin.router)
 app.include_router(chatbot.router)
-
-# ── CONFIGURATION ─────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-oauth2_bearer = OAuth2PasswordBearer(tokenUrl="/auth/token")
-
-REDIS_URL = os.getenv("REDIS_URL")
-redis_client = Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None
-
+app.include_router(wallets.router)
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "vector_store": get_vector_store().index.ntotal > 1
+        "vector_store": get_vector_store().index.ntotal > 1,
+        "redis_connected": redis_client is not None
     }
-
-
-@app.post("/topUp")
-async def top_up_wallet(
-    db: db_dependency,
-    payment_request: PaymentRequest,
-    token: Annotated[str, Depends(oauth2_bearer)]
-):
-    """Add money to wallet"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        owner_type = payload.get("type")
-        owner_id   = payload.get("id")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    wallet = db.query(Wallets).filter(
-        Wallets.owner_type == owner_type,
-        Wallets.owner_id   == owner_id
-    ).first()
-
-    if wallet:
-        wallet.balance += payment_request.amount
-    else:
-        wallet = Wallets(
-            owner_type=owner_type,
-            owner_id=owner_id,
-            balance=payment_request.amount
-        )
-        db.add(wallet)
-
-    db.commit()
-    db.refresh(wallet)
-
-    if redis_client:
-        await redis_client.delete(f"wallet:{owner_type}:{owner_id}")
-
-    return {
-        "owner_type": owner_type,
-        "balance": wallet.balance,
-        "message": "Wallet topped up successfully"
-    }
-
-
-@app.get("/myWallet")
-async def get_my_wallet(
-    db: db_dependency,
-    token: Annotated[str, Depends(oauth2_bearer)]
-):
-    """Get current wallet balance"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        owner_type = payload.get("type")
-        owner_id   = payload.get("id")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    if owner_type not in ("user", "host") or owner_id is None:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
-    wallet = db.query(Wallets).filter(
-        Wallets.owner_type == owner_type,
-        Wallets.owner_id   == owner_id
-    ).first()
-
-    if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
-
-    response = {"balance": float(wallet.balance)}
-
-    if owner_type == "host" and wallet.balance < 500:
-        response["warning"] = "Low balance - need ₹500 to create events"
-
-    return response

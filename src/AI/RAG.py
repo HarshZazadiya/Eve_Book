@@ -25,10 +25,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 print("🔄 Initializing Kimi K2 via Groq...")
 llm = ChatGroq(
-    model="moonshotai/kimi-k2-instruct",
-    temperature=0,
-    max_tokens=2048,
-    groq_api_key=os.getenv("GROQ_API_KEY")
+    model = "moonshotai/kimi-k2-instruct",
+    temperature = 0,
+    max_tokens = 2048,
+    groq_api_key = os.getenv("GROQ_API_KEY")
 )
 
 # ============================================================
@@ -36,9 +36,9 @@ llm = ChatGroq(
 # ============================================================
 print("🔄 Initializing HuggingFace Embeddings...")
 embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": True}
+    model_name = "sentence-transformers/all-MiniLM-L6-v2",
+    model_kwargs = {"device": "cpu"},
+    encode_kwargs = {"normalize_embeddings": True}
 )
 print("✅ LLM and Embeddings ready")
 

@@ -6,164 +6,496 @@ import requests
 
 BASE_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="Event Booking Platform", layout="wide")
+st.set_page_config(
+    page_title="EveBook · AI Event Platform", 
+    page_icon="🎟️", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for modern, clean design
+st.markdown("""
+<style>
+    /* ── Kill the purple gradient, use clean neutral dark ── */
+    .stApp {
+        background: #0f1117 !important;
+    }
+    .main .block-container {
+        background: #0f1117 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        padding: 1.5rem 2rem !important;
+        margin: 0 !important;
+        max-width: 100% !important;
+    }
+
+    /* ── Text colours ── */
+    html, body, [class*="css"], p, span, label, div {
+        color: #e2e8f0 !important;
+    }
+    h1, h2, h3, h4 { color: #f1f5f9 !important; }
+
+    /* ── Sidebar ── */
+    section[data-testid="stSidebar"] {
+        background: #1a1d2e !important;
+        border-right: 1px solid #2d3148 !important;
+    }
+    section[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+
+    /* ── Cards / containers ── */
+    [data-testid="stExpander"],
+    div[data-testid="stVerticalBlock"] > div > [data-testid="stVerticalBlock"] {
+        background: #161b2e !important;
+        border: 1px solid #2d3148 !important;
+        border-radius: 12px !important;
+    }
+
+    /* ── Buttons ── */
+    .stButton > button {
+        border-radius: 10px !important;
+        font-weight: 500 !important;
+        transition: all 0.15s !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: #3b5bdb !important;
+        color: #fff !important;
+        border: none !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: #4c6ef5 !important;
+        transform: translateY(-1px) !important;
+    }
+    .stButton > button[kind="secondary"] {
+        background: #1e2235 !important;
+        color: #94a3b8 !important;
+        border: 1px solid #2d3148 !important;
+    }
+    .stButton > button[kind="secondary"]:hover {
+        background: #252a40 !important;
+        color: #e2e8f0 !important;
+    }
+
+    /* ── Chat messages ── */
+    .stChatMessage {
+        background: #161b2e !important;
+        border: 1px solid #2d3148 !important;
+        border-radius: 14px !important;
+        margin: 0.4rem 0 !important;
+    }
+    .stChatMessage p, .stChatMessage span, .stChatMessage li { color: #e2e8f0 !important; }
+
+    /* ── Status widget ── */
+    [data-testid="stStatusWidget"],
+    div[data-testid="stStatus"] {
+        background: #1a2035 !important;
+        border: 1px solid #2d3c5e !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stStatusWidget"] p,
+    [data-testid="stStatusWidget"] span { color: #94a3b8 !important; }
+
+    /* ── Chat input ── */
+    [data-testid="stChatInputContainer"] {
+        background: #161b2e !important;
+        border: 1px solid #2d3148 !important;
+        border-radius: 14px !important;
+    }
+    [data-testid="stChatInputContainer"]:focus-within {
+        border-color: #3b5bdb !important;
+        box-shadow: 0 0 0 3px rgba(59,91,219,.15) !important;
+    }
+    [data-testid="stChatInput"] textarea {
+        background: transparent !important;
+        color: #e2e8f0 !important;
+        border: none !important;
+    }
+    [data-testid="stChatInput"] textarea::placeholder { color: #4a5568 !important; }
+
+    /* ── Inputs ── */
+    .stTextInput > div > div > input {
+        background: #1a1d2e !important;
+        border: 1px solid #2d3148 !important;
+        border-radius: 10px !important;
+    }
+
+    /* ── Metrics ── */
+    [data-testid="stMetricValue"] { color: #f1f5f9 !important; }
+    [data-testid="stMetricLabel"] { color: #94a3b8 !important; }
+
+    /* ── Dividers ── */
+    hr { border-color: #2d3148 !important; }
+
+    /* ── Alerts ── */
+    .stAlert { border-radius: 10px !important; }
+
+    /* ── Popover ── */
+    [data-testid="stPopover"] { background: #1a1d2e !important; }
+
+    /* ── Select / radio ── */
+    .stRadio label { color: #cbd5e1 !important; }
+
+    /* ── Expander header ── */
+    [data-testid="stExpander"] summary { color: #94a3b8 !important; }
+
+    /* ── Hide default chrome ── */
+    #MainMenu, footer { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
 
 # =================================================
-# CHAT INTERFACE
+# CHAT INTERFACE — clean Streamlit-native UI
 # =================================================
+
 def chat_interface():
-    """Chat interface with Human-in-the-Loop approval for sensitive actions"""
+    """Chat interface with HITL approval + live tool-call status"""
 
-    # ── session state init ──────────────────────────────────
-    for key, default in [
-        ("current_thread_id",   None),
-        ("messages",            []),
-        ("hitl_pending",        False),   # True while waiting for yes/no
-        ("hitl_last_message",   None),    # original user message that triggered HITL
-        ("hitl_tools",          []),      # tool names needing approval
-    ]:
-        if key not in st.session_state:
-            st.session_state[key] = default
+    # ── session state ─────────────────────────────────────────
+    defaults = {
+        "current_thread_id":   None,
+        "messages":            [],
+        "hitl_pending":        False,
+        "hitl_last_message":   None,
+        "hitl_tools":          [],
+        "thread_names":        {},   # thread_id → custom title (local cache)
+        "renaming_thread":     None, # thread_id currently being renamed
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
     auth_headers = {"Authorization": f"Bearer {st.session_state.token}"}
 
-    # ── sidebar: thread list ─────────────────────────────────
+    # ── sidebar — thread list ─────────────────────────────────
     with st.sidebar:
-        st.subheader("💬 Chat History")
-        if st.button("➕ New Chat", use_container_width=True):
+        st.markdown("""
+        <div style='text-align: center; margin-bottom: 2rem;'>
+            <div style='font-size: 2.5rem; margin-bottom: 0.5rem;'>✨</div>
+            <div style='font-weight: 600; font-size: 1.2rem; color: white;'>EveBook AI</div>
+            <div style='color: #94a3b8; font-size: 0.8rem;'>Your intelligent assistant</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("＋ New conversation", use_container_width=True, type="primary"):
             st.session_state.current_thread_id = None
             st.session_state.messages          = []
             st.session_state.hitl_pending      = False
             st.session_state.hitl_last_message = None
+            st.session_state.hitl_tools        = []
             st.rerun()
 
-        st.divider()
+        st.markdown("<hr style='margin: 1rem 0; opacity: 0.2;'>", unsafe_allow_html=True)
 
         try:
-            threads_res = requests.get(f"{BASE_URL}/chat/threads", headers=auth_headers)
-            if threads_res.status_code == 200:
-                for thread in threads_res.json():
-                    col1, col2 = st.columns([4, 1])
-                    preview_text = thread.get('last_message') or "Empty chat"
-                    preview = preview_text[:28] + "…" if len(preview_text) > 28 else preview_text
-                    with col1:
-                        if st.button(f"📝 {preview}", key=f"thread_{thread['id']}",
-                                     use_container_width=True):
-                            st.session_state.current_thread_id = thread['id']
-                            msgs_res = requests.get(
-                                f"{BASE_URL}/chat/threads/{thread['id']}/messages",
-                                headers=auth_headers
-                            )
-                            st.session_state.messages     = msgs_res.json() if msgs_res.status_code == 200 else []
-                            st.session_state.hitl_pending = False
-                            st.rerun()
-                    with col2:
-                        if st.button("🗑️", key=f"del_{thread['id']}"):
-                            requests.delete(f"{BASE_URL}/chat/threads/{thread['id']}",
-                                            headers=auth_headers)
-                            if st.session_state.current_thread_id == thread['id']:
-                                st.session_state.current_thread_id = None
-                                st.session_state.messages          = []
-                                st.session_state.hitl_pending      = False
-                            st.rerun()
-        except Exception as e:
-            st.error(f"Error loading threads: {e}")
+            tr = requests.get(f"{BASE_URL}/chat/threads", headers=auth_headers, timeout=5)
+            if tr.status_code == 200:
+                threads = tr.json()
+                
+                if not threads:
+                    st.markdown("""
+                    <div style='text-align: center; color: #94a3b8; padding: 2rem 0;'>
+                        <div style='font-size: 2rem; margin-bottom: 0.5rem;'>💭</div>
+                        <div>No conversations yet</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                for thread in threads:
+                    active       = thread["id"] == st.session_state.current_thread_id
+                    tid_key      = thread["id"]
 
-    # ── message history ──────────────────────────────────────
-    for msg in st.session_state.messages:
-        with st.chat_message(msg.get("role", "user")):
-            st.markdown(msg.get("content", ""))
-
-    # ── HITL approval UI ─────────────────────────────────────
-    # When hitl_pending is True we show YES/NO buttons instead of the text input.
-    if st.session_state.hitl_pending:
-        tools_str = ", ".join(f"`{t}`" for t in st.session_state.hitl_tools)
-        st.warning(f"⚠️ Waiting for your approval to run: {tools_str}")
-
-        col_yes, col_no, _ = st.columns([1, 1, 4])
-        approved = None
-        with col_yes:
-            if st.button("✅ Yes, proceed", use_container_width=True, type="primary"):
-                approved = "yes"
-        with col_no:
-            if st.button("❌ No, cancel", use_container_width=True):
-                approved = "no"
-
-        if approved is not None:
-            with st.spinner("Processing your decision…"):
-                try:
-                    resp = requests.post(
-                        f"{BASE_URL}/chat/ask",
-                        headers=auth_headers,
-                        json={
-                            "message":          st.session_state.hitl_last_message,
-                            "thread_id":        st.session_state.current_thread_id,
-                            "human_approval":   approved,
-                        },
-                        timeout=60,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        st.session_state.current_thread_id = data["thread_id"]
-                        st.session_state.messages.append(
-                            {"role": "assistant", "content": data["response"]}
-                        )
+                    # Title priority: local rename cache → server thread_name → message preview
+                    if tid_key in st.session_state.thread_names:
+                        display_name = st.session_state.thread_names[tid_key]
+                    elif thread.get("thread_name") and thread["thread_name"] != "New Chat":
+                        display_name = thread["thread_name"]
+                        st.session_state.thread_names[tid_key] = thread["thread_name"]
                     else:
-                        st.error(f"HTTP {resp.status_code}: {resp.text}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                finally:
+                        preview_text = thread.get("last_message") or "New Chat"
+                        display_name = preview_text[:32] + "…" if len(preview_text) > 32 else preview_text
+
+                    # ── rename mode: show text input inline ──
+                    if st.session_state.renaming_thread == tid_key:
+                        st.markdown(f"<div style='margin-bottom: 0.5rem; color: white; font-size: 0.9rem;'>Rename thread</div>", unsafe_allow_html=True)
+                        new_name = st.text_input(
+                            "",
+                            value=display_name,
+                            key=f"rename_input_{tid_key}",
+                            label_visibility="collapsed",
+                            placeholder="Enter new name…"
+                        )
+                        rc1, rc2 = st.columns([1, 1])
+                        with rc1:
+                            if st.button("✓ Save", key=f"save_{tid_key}", use_container_width=True, type="primary"):
+                                if new_name.strip():
+                                    st.session_state.thread_names[tid_key] = new_name.strip()
+                                    try:
+                                        requests.patch(
+                                            f"{BASE_URL}/chat/threads/{tid_key}/rename",
+                                            headers=auth_headers,
+                                            json={"thread_name": new_name.strip()},
+                                            timeout=5
+                                        )
+                                    except Exception:
+                                        pass
+                                st.session_state.renaming_thread = None
+                                st.rerun()
+                        with rc2:
+                            if st.button("✕ Cancel", key=f"cancel_rename_{tid_key}", use_container_width=True):
+                                st.session_state.renaming_thread = None
+                                st.rerun()
+                        continue
+
+                    # ── normal row ──
+                    with st.container():
+                        col1, col2, col3 = st.columns([5, 1, 1])
+                        with col1:
+                            btn_type = "primary" if active else "secondary"
+                            icon = "🟢" if active else "💬"
+                            if st.button(
+                                f"{icon}  {display_name}",
+                                key=f"t_{tid_key}",
+                                use_container_width=True,
+                                type=btn_type,
+                            ):
+                                st.session_state.current_thread_id = tid_key
+                                st.session_state.hitl_pending      = False
+                                msgs_r = requests.get(
+                                    f"{BASE_URL}/chat/threads/{tid_key}/messages",
+                                    headers=auth_headers)
+                                st.session_state.messages = msgs_r.json() if msgs_r.status_code == 200 else []
+                                st.rerun()
+                        with col2:
+                            if st.button("✏️", key=f"ren_{tid_key}", help="Rename"):
+                                st.session_state.renaming_thread = tid_key
+                                st.rerun()
+                        with col3:
+                            if st.button("🗑", key=f"d_{tid_key}", help="Delete"):
+                                requests.delete(
+                                    f"{BASE_URL}/chat/threads/{tid_key}",
+                                    headers=auth_headers)
+                                if st.session_state.current_thread_id == tid_key:
+                                    st.session_state.current_thread_id = None
+                                    st.session_state.messages          = []
+                                    st.session_state.hitl_pending      = False
+                                st.session_state.thread_names.pop(tid_key, None)
+                                st.rerun()
+        except Exception as e:
+            st.error(f"Could not load threads: {e}")
+
+    # ── main area header ──────────────────────────────────────
+    tid = st.session_state.current_thread_id
+    if tid and tid in st.session_state.thread_names:
+        sub = st.session_state.thread_names[tid]
+    elif tid:
+        sub = f"Thread #{tid}"
+    else:
+        sub = "Start a new conversation"
+    
+    st.markdown(f"""
+    <div style='display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;'>
+        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    width: 40px; height: 40px; border-radius: 12px; 
+                    display: flex; align-items: center; justify-content: center;
+                    color: white; font-size: 1.2rem;'>
+            💬
+        </div>
+        <div>
+            <div style='font-size: 1.5rem; font-weight: 600; color: var(--dark);'>AI Assistant</div>
+            <div style='color: var(--gray); font-size: 0.9rem;'>{sub}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
+
+    # ── message history ───────────────────────────────────────
+    msgs = st.session_state.messages
+    if not msgs and not st.session_state.hitl_pending:
+        st.markdown("""
+        <div style='text-align: center; padding: 4rem 2rem;'>
+            <div style='font-size: 4rem; margin-bottom: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
+                ✨
+            </div>
+            <div style='font-size: 1.5rem; font-weight: 500; color: var(--dark); margin-bottom: 0.5rem;'>
+                How can I help you today?
+            </div>
+            <div style='color: var(--black);'>
+                Ask me about events, bookings, wallets, files, and more
+            </div>
+            <div style='display: flex; gap: 0.5rem; justify-content: center; margin-top: 2rem;'>
+                <span style='background: #f1f5f9; padding: 0.25rem 1rem; border-radius: 20px; color: var(--black);'>🎟️ Browse events</span>
+                <span style='background: #f1f5f9; padding: 0.25rem 1rem; border-radius: 20px; color: var(--black);'>💰 Check wallet</span>
+                <span style='background: #f1f5f9; padding: 0.25rem 1rem; border-radius: 20px; color: var(--black);'>📅 My bookings</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        for msg in msgs:
+            role    = msg.get("role", "user")
+            content = msg.get("content", "")
+            with st.chat_message(role):
+                st.markdown(content)
+
+    # ── HITL approval ─────────────────────────────────────────
+    if st.session_state.hitl_pending:
+        tools_str = "  ".join(f"`{t}`" for t in st.session_state.hitl_tools)
+
+        with st.chat_message("assistant"):
+            with st.status("⏳ Waiting for your approval…", expanded=True) as status:
+                # Show what tool wants to run + its args
+                st.write(f"⚠️ The assistant wants to run: {tools_str}")
+
+                col_yes, col_no, _ = st.columns([1, 1, 4])
+                approved = None
+                with col_yes:
+                    if st.button("✅ Yes, proceed", use_container_width=True, type="primary",
+                                 key="hitl_yes"):
+                        approved = "yes"
+                with col_no:
+                    if st.button("❌ No, cancel", use_container_width=True,
+                                 key="hitl_no"):
+                        approved = "no"
+
+                if approved is not None:
+                    # Update status to show running
+                    if approved == "yes":
+                        status.update(label="⚙️ Executing…", state="running", expanded=True)
+                    else:
+                        status.update(label="🚫 Cancelled", state="complete", expanded=False)
+
+                    if approved == "yes":
+                        try:
+                            resp = requests.post(
+                                f"{BASE_URL}/chat/ask", headers=auth_headers,
+                                json={
+                                    "message":        st.session_state.hitl_last_message,
+                                    "thread_id":      st.session_state.current_thread_id,
+                                    "human_approval": approved,
+                                },
+                                timeout=60)
+                            if resp.status_code == 200:
+                                data       = resp.json()
+                                tools_used = data.get("tools_used") or []
+                                for tc in tools_used:
+                                    st.write(f"🔧 `{tc.get('name','?')}` completed")
+                                status.update(
+                                    label=f"✅ Done — {', '.join(tc.get('name','?') for tc in tools_used) if tools_used else 'complete'}",
+                                    state="complete", expanded=False)
+                                st.session_state.current_thread_id = data["thread_id"]
+                                st.session_state["_hitl_response"]  = data.get("response", "")
+                            else:
+                                status.update(label="Error", state="error", expanded=True)
+                                st.error(f"HTTP {resp.status_code}: {resp.text}")
+                        except Exception as e:
+                            status.update(label="Error", state="error", expanded=True)
+                            st.error(str(e))
+                    else:
+                        # Denied — ask backend to resume with "no"
+                        try:
+                            resp = requests.post(
+                                f"{BASE_URL}/chat/ask", headers=auth_headers,
+                                json={
+                                    "message":        st.session_state.hitl_last_message,
+                                    "thread_id":      st.session_state.current_thread_id,
+                                    "human_approval": "no",
+                                },
+                                timeout=60)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                st.session_state.current_thread_id = data["thread_id"]
+                                st.session_state["_hitl_response"]  = data.get("response", "")
+                        except Exception:
+                            st.session_state["_hitl_response"] = "Action cancelled."
+
                     st.session_state.hitl_pending      = False
                     st.session_state.hitl_last_message = None
                     st.session_state.hitl_tools        = []
-            st.rerun()
-        return   # don't show chat input while waiting for approval
 
-    # ── normal chat input ────────────────────────────────────
-    if prompt := st.chat_input("Ask me about events…"):
+            # ── Answer printed BELOW the status widget ──
+            hitl_reply = st.session_state.pop("_hitl_response", None)
+            if hitl_reply:
+                st.markdown(hitl_reply)
+                st.session_state.messages.append({"role": "assistant", "content": hitl_reply})
+
+        if not st.session_state.hitl_pending:
+            st.rerun()
+        return  # hide input while waiting
+
+    # ── chat input ────────────────────────────────────────────
+    if prompt := st.chat_input("Ask about events, files, wallets…"):
         with st.chat_message("user"):
             st.markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        try:
-            with st.spinner("Thinking…"):
-                resp = requests.post(
-                    f"{BASE_URL}/chat/ask",
-                    headers=auth_headers,
-                    json={
-                        "message":   prompt,
-                        "thread_id": st.session_state.current_thread_id,
-                    },
-                    timeout=60,
-                )
+        with st.chat_message("assistant"):
+            # Status widget — shows tools while waiting, collapses after
+            with st.status("Working…", expanded=True) as status:
+                try:
+                    resp = requests.post(
+                        f"{BASE_URL}/chat/ask", headers=auth_headers,
+                        json={
+                            "message":   prompt,
+                            "thread_id": st.session_state.current_thread_id,
+                        },
+                        timeout=60)
 
-            if resp.status_code == 200:
-                data = resp.json()
-                st.session_state.current_thread_id = data["thread_id"]
-                ai_text = data.get("response", "")
+                    if resp.status_code == 200:
+                        data       = resp.json()
+                        tools_used = data.get("tools_used") or []
+                        ai_text    = data.get("response", "")
 
-                # ── HITL triggered ────────────────────────────
-                if data.get("hitl_required"):
-                    st.session_state.hitl_pending      = True
-                    st.session_state.hitl_last_message = prompt
-                    st.session_state.hitl_tools        = data.get("hitl_tools") or []
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": ai_text}
-                    )
-                    st.rerun()
-                else:
-                    with st.chat_message("assistant"):
-                        st.markdown(ai_text)
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": ai_text}
-                    )
-            else:
-                st.error(f"HTTP {resp.status_code}: {resp.text}")
+                        # Show only tools called for THIS query
+                        for tc in tools_used:
+                            name = tc.get("name", "unknown")
+                            args = tc.get("args", {})
+                            hint = next(iter(args.values()), "") if args else ""
+                            hint_str = f" · `{str(hint)[:45]}`" if hint else ""
+                            st.write(f"🔧 `{name}`{hint_str}")
 
-        except requests.exceptions.Timeout:
-            st.error("⏱️ Request timed out")
-        except Exception as e:
-            st.error(f"Error: {e}")
+                        if data.get("hitl_required"):
+                            status.update(label="⏳ Waiting for your approval…",
+                                          state="running", expanded=False)
+                            st.session_state.hitl_pending      = True
+                            st.session_state.hitl_last_message = prompt
+                            st.session_state.hitl_tools        = data.get("hitl_tools") or []
+                            st.session_state.current_thread_id = data["thread_id"]
+                            st.session_state.messages.append(
+                                {"role": "assistant", "content": ai_text})
+                            st.rerun()
+                        else:
+                            if tools_used:
+                                names = ", ".join(tc.get("name","?") for tc in tools_used)
+                                status.update(
+                                    label=f"✅ Used {len(tools_used)} tool{'s' if len(tools_used)>1 else ''} — {names}",
+                                    state="complete", expanded=False)
+                            else:
+                                status.update(label="✅ Done", state="complete", expanded=False)
+
+                        st.session_state.current_thread_id = data["thread_id"]
+                        # Store response to render OUTSIDE the status block
+                        st.session_state["_pending_response"] = ai_text
+                        st.session_state.messages.append(
+                            {"role": "assistant", "content": ai_text})
+
+                    else:
+                        status.update(label="Error", state="error", expanded=True)
+                        st.error(f"HTTP {resp.status_code}: {resp.text}")
+                        st.session_state["_pending_response"] = None
+
+                except requests.exceptions.Timeout:
+                    status.update(label="Timed out", state="error", expanded=True)
+                    st.error("⏱️ Request timed out")
+                    st.session_state["_pending_response"] = None
+                except Exception as e:
+                    status.update(label="Error", state="error", expanded=True)
+                    st.error(str(e))
+                    st.session_state["_pending_response"] = None
+
+            # ── Answer printed HERE — outside/below the status widget ──
+            ai_text = st.session_state.pop("_pending_response", None)
+            if ai_text:
+                st.markdown(ai_text)
+
 
 # ---------------- SESSION ----------------
 if "token" not in st.session_state:
@@ -198,12 +530,11 @@ def smart_tabs(tab_list, key="tab"):
     if key not in st.session_state:
         st.session_state[key] = tab_list[0]
     
-    # Add a label and hide it
     selected = st.radio(
-        "Navigation",  # Add a label
+        "Navigation",
         tab_list, 
         horizontal=True,
-        label_visibility="collapsed"  # Hide it visually
+        label_visibility="collapsed"
     )
     
     if selected != st.session_state[key]:
@@ -214,7 +545,19 @@ def smart_tabs(tab_list, key="tab"):
 
 # ---------------- PROFILE MENU ----------------
 def profile_menu():
-    with st.popover("👤 Profile"):
+    with st.popover("👤"):
+        st.markdown(f"""
+        <div style='text-align: center; margin-bottom: 1rem;'>
+            <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        width: 60px; height: 60px; border-radius: 30px;
+                        margin: 0 auto 0.5rem; display: flex; align-items: center;
+                        justify-content: center; color: white; font-size: 1.5rem;'>
+                {st.session_state.role[0].upper()}
+            </div>
+            <div style='font-weight: 600;'>{st.session_state.role.upper()}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
         if st.session_state.role == "user":
             res = requests.get(f"{BASE_URL}/user/", headers=headers())
         elif st.session_state.role == "host":
@@ -225,17 +568,35 @@ def profile_menu():
         if res.status_code == 200:
             data = res.json()
             for k, v in data.items():
-                st.write(f"**{k.capitalize()}** : {v}")
+                st.markdown(f"""
+                <div style='margin-bottom: 0.5rem;'>
+                    <span style='color: var(--gray); font-size: 0.8rem;'>{k.capitalize()}</span><br>
+                    <span style='font-weight: 500;'>{v}</span>
+                </div>
+                """, unsafe_allow_html=True)
         
         st.divider()
         
-        if st.button("Logout"):
+        if st.button("Logout", use_container_width=True, type="primary"):
             st.session_state.clear()
             st.rerun()
 
 # ---------------- WALLET UI ----------------
 def wallet_ui():
-    st.header("💰 Wallet")
+    st.markdown("""
+    <div style='display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem;'>
+        <div style='background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    width: 40px; height: 40px; border-radius: 12px;
+                    display: flex; align-items: center; justify-content: center;
+                    color: black; font-size: 1.2rem;'>
+            💰
+        </div>
+        <div>
+            <div style='font-size: 1.5rem; font-weight: 600; color: var(--dark);'>Wallet</div>
+            <div style='color: var(--gray); font-size: 0.9rem;'>Manage your funds</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     r = requests.get(f"{BASE_URL}/myWallet", headers=headers())
     
@@ -243,24 +604,32 @@ def wallet_ui():
         data = r.json()
         balance = data.get("balance") or data.get("wallet_balance") or 0
         
-        # Create a nice card for wallet
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.metric("Current Balance", f"₹ {balance:,.2f}", delta=None)
+        st.markdown(f"""
+        <div style='background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+                    padding: 2rem; border-radius: 24px; text-align: center; margin-bottom: 2rem;'>
+            <div style='color: var(--gray); font-size: 0.9rem; margin-bottom: 0.5rem;'>Current Balance</div>
+            <div style='font-size: 3rem; font-weight: 600; color: black;'>₹ {balance:,.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
         
         if "warning" in data:
             st.warning(data["warning"])
     
-    st.divider()
+    st.markdown("""
+    <div style='display: flex; align-items: center; gap: 0.5rem; margin: 2rem 0 1rem;'>
+        <div style='background: #f1f5f9; width: 30px; height: 30px; border-radius: 8px;
+                    display: flex; align-items: center; justify-content: center; color: var(--dark);'>
+            ➕
+        </div>
+        <div style='font-size: 1.2rem; font-weight: 500;'>Add Money</div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Top up section
-    st.subheader("Add Money to Wallet")
     col1, col2, col3 = st.columns([1, 2, 1])
-    
     with col2:
-        amount = st.number_input("Amount (₹)", min_value=1, value=100, step=100)
+        amount = st.number_input("", min_value=1, value=100, step=100, label_visibility="collapsed")
         
-        if st.button("➕ Add Money", use_container_width=True):
+        if st.button("➕ Add Money", use_container_width=True, type="primary"):
             with st.spinner("Processing..."):
                 response = requests.post(
                     f"{BASE_URL}/topUp",
@@ -277,55 +646,68 @@ def wallet_ui():
 # AUTH UI
 # =================================================
 if not st.session_state.token:
-    st.title("🎟 Event Booking Platform")
-    
-    tab1, tab2 = st.tabs(["Login", "Register"])
-    
-    with tab1:
-        username = st.text_input("Username / Email", key="login_user")
-        password = st.text_input("Password", type="password", key="login_pass")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        <div style='text-align: center; margin-bottom: 3rem;'>
+            <div style='font-size: 4rem; margin-bottom: 1rem;'>🎟️</div>
+            <div style='font-size: 2rem; font-weight: 600; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
+                EveBook
+            </div>
+            <div style='color: var(--gray); margin-top: 0.5rem;'>AI-Powered Event Booking Platform</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        if st.button("Login"):
-            res = login(username, password)
-            
-            if res.status_code == 200:
-                st.session_state.token = res.json()["access_token"]
-                st.session_state.role = detect_role()
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
-    
-    with tab2:
-        role = st.radio("Register As", ["User", "Host"])
+        tab1, tab2 = st.tabs(["Login", "Register"])
         
-        if role == "User":
-            username = st.text_input("Username")
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
+        with tab1:
+            with st.container(border=True):
+                username = st.text_input("Username / Email", key="login_user")
+                password = st.text_input("Password", type="password", key="login_pass")
+                
+                if st.button("Login", use_container_width=True, type="primary"):
+                    res = login(username, password)
+                    
+                    if res.status_code == 200:
+                        st.session_state.token = res.json()["access_token"]
+                        st.session_state.role = detect_role()
+                        st.rerun()
+                    else:
+                        st.error("Invalid credentials")
+        
+        with tab2:
+            role = st.radio("Register As", ["User", "Host"], horizontal=True)
             
-            if st.button("Register User"):
-                r = requests.post(
-                    f"{BASE_URL}/auth/user",
-                    json={"username": username, "email": email, "password": password}
-                )
-                if r.status_code == 201:
-                    st.success("User Registered")
+            with st.container(border=True):
+                if role == "User":
+                    username = st.text_input("Username")
+                    email = st.text_input("Email")
+                    password = st.text_input("Password", type="password")
+                    
+                    if st.button("Register User", use_container_width=True, type="primary"):
+                        r = requests.post(
+                            f"{BASE_URL}/auth/user",
+                            json={"username": username, "email": email, "password": password}
+                        )
+                        if r.status_code == 201:
+                            st.success("User Registered")
+                        else:
+                            st.error(r.text)
                 else:
-                    st.error(r.text)
-        else:
-            company = st.text_input("Company Name")
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            
-            if st.button("Register Host"):
-                r = requests.post(
-                    f"{BASE_URL}/auth/host",
-                    json={"company_name": company, "email": email, "password": password}
-                )
-                if r.status_code == 201:
-                    st.success("Host Registered")
-                else:
-                    st.error(r.text)
+                    company = st.text_input("Company Name")
+                    email = st.text_input("Email")
+                    password = st.text_input("Password", type="password")
+                    
+                    if st.button("Register Host", use_container_width=True, type="primary"):
+                        r = requests.post(
+                            f"{BASE_URL}/auth/host",
+                            json={"company_name": company, "email": email, "password": password}
+                        )
+                        if r.status_code == 201:
+                            st.success("Host Registered")
+                        else:
+                            st.error(r.text)
     
     st.stop()
 
@@ -335,10 +717,25 @@ role = st.session_state.role
 col1, col2 = st.columns([6, 1])
 
 with col1:
-    st.title(f"Dashboard — {role.upper()}")
+    st.markdown(f"""
+    <div style='display: flex; align-items: center; gap: 1rem;'>
+        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    width: 50px; height: 50px; border-radius: 16px;
+                    display: flex; align-items: center; justify-content: center;
+                    color: white; font-size: 1.5rem;'>
+            {role[0].upper()}
+        </div>
+        <div>
+            <div style='font-size: 1.8rem; font-weight: 600; color: var(--dark);'>Dashboard</div>
+            <div style='color: var(--gray);'>{role.upper()} · {datetime.now().strftime("%B %d, %Y")}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 with col2:
     profile_menu()
+
+st.markdown("<hr style='margin: 1.5rem 0;'>", unsafe_allow_html=True)
 
 # =================================================
 # USER DASHBOARD
@@ -375,31 +772,37 @@ def user_dashboard():
             st.info("No events available right now.")
             return
         
-        for e in sorted(events, key=lambda x: x.get("id", 0), reverse=True):
-            with st.container(border=True):
-                st.subheader(f"{e.get('title', 'Untitled')}")
-                
-                c1, c2, c3, c4 = st.columns(4)
-                
-                c1.write(f"📅 {e.get('date', 'Unknown')}")
-                c2.write(f"🎟 Seats: {e.get('available_seats', 0)}")
-                c3.write(f"💰 ₹{e.get('ticket_price', 0)}")
-                c4.write(f"🏢 Host: {e.get('host_name', e.get('host_id', 'Unknown'))}")
-                
-                if st.button("Book", key=f"book_{e.get('id', e.get('event_id', 0))}"):
-                    event_id = e.get('id', e.get('event_id'))
-                    book_res = requests.post(
-                        f"{BASE_URL}/user/event/{event_id}", 
-                        headers=headers()
-                    )
-                    if book_res.status_code == 200:
-                        st.success("Booked successfully!")
-                        st.rerun()
-                    else:
-                        st.error(book_res.text)
-                
-                if e.get("more_details"):
-                    st.link_button("More Details", f"{BASE_URL}{e['more_details']}")
+        # Grid layout for events
+        cols = st.columns(3)
+        for idx, e in enumerate(sorted(events, key=lambda x: x.get("id", 0), reverse=True)):
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    st.markdown(f"""
+                    <div style='margin-bottom: 1rem;'>
+                        <div style='font-size: 2rem; margin-bottom: 0.5rem;'>🎟️</div>
+                        <div style='font-weight: 600; font-size: 1.2rem;'>{e.get('title', 'Untitled')}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"📅 **{e.get('date', 'Unknown')}**")
+                    st.markdown(f"🎟️ Seats: **{e.get('available_seats', 0)}**")
+                    st.markdown(f"💰 ₹**{e.get('ticket_price', 0)}**")
+                    st.markdown(f"🏢 Host: **{e.get('host_name', e.get('host_id', 'Unknown'))}**")
+                    
+                    if st.button("Book Now", key=f"book_{e.get('id', e.get('event_id', 0))}", use_container_width=True, type="primary"):
+                        event_id = e.get('id', e.get('event_id'))
+                        book_res = requests.post(
+                            f"{BASE_URL}/user/event/{event_id}", 
+                            headers=headers()
+                        )
+                        if book_res.status_code == 200:
+                            st.success("Booked successfully!")
+                            st.rerun()
+                        else:
+                            st.error(book_res.text)
+                    
+                    if e.get("more_details"):
+                        st.link_button("📄 View Details", f"{BASE_URL}{e['more_details']}", use_container_width=True)
     
     if menu == "My Bookings":
         res = requests.get(f"{BASE_URL}/user/myEvents", headers=headers())
@@ -423,10 +826,29 @@ def user_dashboard():
         
         for b in bookings:
             with st.container(border=True):
-                st.subheader(f"Booking #{b.get('booking_id', 'N/A')}")
-                st.write(f"Event ID: {b.get('event_id', 'N/A')}")
-                st.write(f"Event: {b.get('event_title', 'Unknown')}")
-                st.write(f"Tickets: {b.get('ticket_count', 1)}")
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"""
+                    <div style='font-weight: 600;'>Booking #{b.get('booking_id', 'N/A')}</div>
+                    <div style='color: var(--gray);'>{b.get('event_title', 'Unknown')}</div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown(f"""
+                    <div style='text-align: center;'>
+                        <div style='color: var(--gray);'>Tickets</div>
+                        <div style='font-weight: 600;'>{b.get('ticket_count', 1)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    st.markdown(f"""
+                    <div style='text-align: center;'>
+                        <div style='color: var(--gray);'>Total</div>
+                        <div style='font-weight: 600; color: var(--success);'>₹{b.get('ticket_count', 1) * b.get('ticket_price', 0)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 # Get event details for document link
                 events_res = requests.get(f"{BASE_URL}/user/events", headers=headers())
@@ -439,9 +861,9 @@ def user_dashboard():
                     )
                     
                     if event and event.get("more_details"):
-                        st.link_button("More Details", f"{BASE_URL}{event['more_details']}")
+                        st.link_button("📄 View Details", f"{BASE_URL}{event['more_details']}", use_container_width=True)
                 
-                if st.button("Cancel", key=f"cancel_{b.get('booking_id')}"):
+                if st.button("Cancel Booking", key=f"cancel_{b.get('booking_id')}"):
                     cancel_res = requests.delete(
                         f"{BASE_URL}/user/booking/{b.get('booking_id')}",
                         headers=headers()
@@ -453,15 +875,36 @@ def user_dashboard():
                         st.error(cancel_res.text)
     
     if menu == "Promote To Host":
-        st.warning("This will cost ₹10,000 from your wallet")
-        if st.button("Pay ₹10,000 & Promote to Host"):
-            res = requests.post(f"{BASE_URL}/user/promote-to-host", headers=headers())
-            if res.status_code == 200:
-                st.success("Promoted to Host successfully! Please login again.")
-                st.session_state.clear()
-                st.rerun()
-            else:
-                st.error(res.text)
+        with st.container(border=True):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.markdown("""
+                <div style='background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                            width: 80px; height: 80px; border-radius: 40px;
+                            display: flex; align-items: center; justify-content: center;
+                            color: white; font-size: 2rem; margin: 0 auto;'>
+                    ⭐
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                <div style='font-size: 1.5rem; font-weight: 600;'>Become a Host</div>
+                <div style='color: var(--gray);'>Create events and earn money</div>
+                <div style='margin-top: 0.5rem;'>💳 One-time fee: <strong>₹10,000</strong></div>
+                """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            if st.button("Pay ₹10,000 & Promote to Host", use_container_width=True, type="primary"):
+                res = requests.post(f"{BASE_URL}/user/promote-to-host", headers=headers())
+                if res.status_code == 200:
+                    st.success("Promoted to Host successfully! Please login again.")
+                    st.session_state.clear()
+                    st.rerun()
+                else:
+                    st.error(res.text)
 
 # =================================================
 # HOST DASHBOARD
@@ -479,41 +922,55 @@ def host_dashboard():
         wallet_ui()
     
     elif menu == "Create Event":
-        with st.form("create_event_form"):
-            title = st.text_input("Title")
-            venue = st.text_input("Venue")
-            date_val = st.date_input("Date")
-            seats = st.number_input("Seats", min_value=1, value=100)
-            price = st.number_input("Ticket Price (₹)", min_value=1, value=100)
-            document = st.file_uploader("Upload Event PDF (optional)", type=["pdf"])
+        with st.container(border=True):
+            st.markdown("""
+            <div style='margin-bottom: 2rem;'>
+                <div style='font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem;'>Create New Event</div>
+                <div style='color: var(--gray);'>Fill in the details below</div>
+            </div>
+            """, unsafe_allow_html=True)
             
-            submitted = st.form_submit_button("Create Event")
-            
-            if submitted:
-                data = {
-                    "title": title,
-                    "venue": venue,
-                    "date": str(date_val),
-                    "seats": seats,
-                    "ticket_price": price
-                }
+            with st.form("create_event_form"):
+                col1, col2 = st.columns(2)
                 
-                files = {}
-                if document:
-                    files["document"] = (document.name, document, "application/pdf")
+                with col1:
+                    title = st.text_input("Event Title")
+                    venue = st.text_input("Venue")
+                    date_val = st.date_input("Date")
                 
-                res = requests.post(
-                    f"{BASE_URL}/host/event",
-                    headers=headers(),
-                    data=data,
-                    files=files
-                )
+                with col2:
+                    seats = st.number_input("Total Seats", min_value=1, value=100)
+                    price = st.number_input("Ticket Price (₹)", min_value=1, value=100)
                 
-                if res.status_code == 200:
-                    st.success("Event Created Successfully!")
-                    st.rerun()
-                else:
-                    st.error(res.text)
+                document = st.file_uploader("Upload Event PDF (optional)", type=["pdf"])
+                
+                submitted = st.form_submit_button("Create Event", use_container_width=True, type="primary")
+                
+                if submitted:
+                    data = {
+                        "title": title,
+                        "venue": venue,
+                        "date": str(date_val),
+                        "seats": seats,
+                        "ticket_price": price
+                    }
+                    
+                    files = {}
+                    if document:
+                        files["document"] = (document.name, document, "application/pdf")
+                    
+                    res = requests.post(
+                        f"{BASE_URL}/host/event",
+                        headers=headers(),
+                        data=data,
+                        files=files
+                    )
+                    
+                    if res.status_code == 200:
+                        st.success("Event Created Successfully!")
+                        st.rerun()
+                    else:
+                        st.error(res.text)
     
     elif menu == "My Events":
         res = requests.get(f"{BASE_URL}/host/events", headers=headers())
@@ -537,10 +994,15 @@ def host_dashboard():
             return
         
         for e in events:
-            with st.expander(f"{e.get('title', 'Untitled')} — {e.get('date', 'Unknown')}"):
-                st.write(f"📍 Venue: {e.get('venue', 'Unknown')}")
-                st.write(f"🎟 Seats: {e.get('available_seats', 0)} / {e.get('seats', 0)}")
-                st.write(f"💰 Ticket Price: ₹{e.get('ticket_price', 0)}")
+            with st.expander(f"🎟️ {e.get('title', 'Untitled')} — {e.get('date', 'Unknown')}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown(f"📍 **Venue:** {e.get('venue', 'Unknown')}")
+                    st.markdown(f"🎟️ **Seats:** {e.get('available_seats', 0)} / {e.get('seats', 0)}")
+                
+                with col2:
+                    st.markdown(f"💰 **Ticket Price:** ₹{e.get('ticket_price', 0)}")
                 
                 st.divider()
                 
@@ -548,7 +1010,7 @@ def host_dashboard():
                 
                 # DELETE
                 with col1:
-                    if st.button("Delete", key=f"del_{e.get('id')}"):
+                    if st.button("🗑 Delete", key=f"del_{e.get('id')}"):
                         del_res = requests.delete(
                             f"{BASE_URL}/host/event/{e.get('id')}",
                             headers=headers()
@@ -562,18 +1024,18 @@ def host_dashboard():
                 # VIEW DOCUMENT
                 with col2:
                     if e.get("more_details"):
-                        st.link_button("View Document", f"{BASE_URL}{e['more_details']}")
+                        st.link_button("📄 View Document", f"{BASE_URL}{e['more_details']}", use_container_width=True)
                 
                 # EDIT TOGGLE
                 with col3:
-                    if st.button("Edit Event", key=f"edit_toggle_{e.get('id')}"):
+                    if st.button("✏️ Edit", key=f"edit_toggle_{e.get('id')}"):
                         st.session_state[f"edit_mode_{e.get('id')}"] = not st.session_state.get(
                             f"edit_mode_{e.get('id')}", False
                         )
                 
                 # DOCUMENT TOGGLE
                 with col4:
-                    if st.button("Update Document", key=f"doc_toggle_{e.get('id')}"):
+                    if st.button("📎 Update Doc", key=f"doc_toggle_{e.get('id')}"):
                         st.session_state[f"doc_mode_{e.get('id')}"] = not st.session_state.get(
                             f"doc_mode_{e.get('id')}", False
                         )
@@ -581,20 +1043,24 @@ def host_dashboard():
                 # EDIT EVENT SECTION
                 if st.session_state.get(f"edit_mode_{e.get('id')}", False):
                     st.divider()
-                    st.subheader("Update Event Details")
+                    st.markdown("### ✏️ Edit Event Details")
                     
                     with st.form(f"edit_form_{e.get('id')}"):
-                        new_title = st.text_input("Title", value=e.get('title', ''))
-                        new_venue = st.text_input("Venue", value=e.get('venue', ''))
-                        new_date = st.date_input(
-                            "Date",
-                            value=datetime.strptime(e.get('date', '2025-01-01'), "%Y-%m-%d").date()
-                        )
-                        new_seats = st.number_input("Seats", value=e.get('seats', 1), min_value=1)
-                        new_price = st.number_input("Ticket Price", value=e.get('ticket_price', 1), min_value=1)
+                        col1, col2 = st.columns(2)
                         
-                        if st.form_submit_button("Save Changes"):
-                            # In app.py, change the update request:
+                        with col1:
+                            new_title = st.text_input("Title", value=e.get('title', ''))
+                            new_venue = st.text_input("Venue", value=e.get('venue', ''))
+                        
+                        with col2:
+                            new_date = st.date_input(
+                                "Date",
+                                value=datetime.strptime(e.get('date', '2025-01-01'), "%Y-%m-%d").date()
+                            )
+                            new_seats = st.number_input("Seats", value=e.get('seats', 1), min_value=1)
+                            new_price = st.number_input("Ticket Price", value=e.get('ticket_price', 1), min_value=1)
+                        
+                        if st.form_submit_button("Save Changes", use_container_width=True, type="primary"):
                             update_data = {
                                 "title": new_title,
                                 "venue": new_venue,
@@ -619,7 +1085,7 @@ def host_dashboard():
                 # UPDATE DOCUMENT SECTION
                 if st.session_state.get(f"doc_mode_{e.get('id')}", False):
                     st.divider()
-                    st.subheader("Upload New Document (PDF Only)")
+                    st.markdown("### 📄 Update Document")
                     
                     new_doc = st.file_uploader(
                         "Select PDF",
@@ -652,11 +1118,11 @@ def admin_dashboard():
     headers_auth = headers()
     
     tab = smart_tabs(
-        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "AI Chatbot"],
+        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "AI ChatBot"],
         key="admin_tab"
     )
     
-    if tab == "AI Chatbot":
+    if tab == "AI ChatBot":
         chat_interface()
     
     # ================= USERS =================
@@ -683,7 +1149,7 @@ def admin_dashboard():
             return
         
         for u in users:
-            with st.expander(f"{u.get('username', 'Unknown')} — {u.get('email', 'No email')}"):
+            with st.expander(f"👤 {u.get('username', 'Unknown')} — {u.get('email', 'No email')}"):
                 user_bookings = [
                     b for b in bookings 
                     if b.get("username") == u.get("username") or b.get("user_id") == u.get("id")
@@ -693,33 +1159,31 @@ def admin_dashboard():
                     st.info("No bookings")
                 else:
                     for b in user_bookings:
-                        st.write(f"Event: {b.get('event_title', 'Unknown')}")
-                        st.write(f"Tickets: {b.get('ticket_count', 0)}")
-                        # Removed payment display as requested
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if st.button("Delete Booking", key=f"admin_del_booking_{b.get('booking_id')}"):
-                                del_res = requests.delete(
-                                    f"{BASE_URL}/admin/booking/{b.get('booking_id')}",
-                                    headers=headers_auth
-                                )
-                                if del_res.status_code == 200:
-                                    st.success("Booking deleted")
-                                    st.rerun()
-                                else:
-                                    st.error(del_res.text)
-                        
-                        with col2:
+                        with st.container(border=True):
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
+                                st.markdown(f"**Event:** {b.get('event_title', 'Unknown')}")
+                                st.markdown(f"**Tickets:** {b.get('ticket_count', 0)}")
+                            
+                            with col2:
+                                if st.button("Delete", key=f"admin_del_booking_{b.get('booking_id')}"):
+                                    del_res = requests.delete(
+                                        f"{BASE_URL}/admin/booking/{b.get('booking_id')}",
+                                        headers=headers_auth
+                                    )
+                                    if del_res.status_code == 200:
+                                        st.success("Booking deleted")
+                                        st.rerun()
+                                    else:
+                                        st.error(del_res.text)
+                            
                             event = next(
                                 (e for e in events if e.get("event_id") == b.get("event_id")),
                                 None
                             )
                             if event and event.get("more_details"):
-                                st.link_button("More Details", f"{BASE_URL}{event['more_details']}")
-                        
-                        st.divider()
+                                st.link_button("📄 More Details", f"{BASE_URL}{event['more_details']}", use_container_width=True)
     
     # ================= HOSTS =================
     elif tab == "Hosts":
@@ -745,17 +1209,15 @@ def admin_dashboard():
             return
         
         for h in hosts:
-            with st.expander(f"{h.get('company_name', h.get('username', 'Unknown'))} — {h.get('email', 'No email')}"):
-                # Host info
+            with st.expander(f"🏢 {h.get('company_name', h.get('username', 'Unknown'))} — {h.get('email', 'No email')}"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"**Host ID:** {h.get('host_id', h.get('id', 'N/A'))}")
-                    st.write(f"**Company:** {h.get('company_name', 'N/A')}")
+                    st.markdown(f"**Host ID:** {h.get('host_id', h.get('id', 'N/A'))}")
+                    st.markdown(f"**Company:** {h.get('company_name', 'N/A')}")
                 with col2:
-                    st.write(f"**Email:** {h.get('email', 'N/A')}")
-                    st.write(f"**Fee Paid:** {'✅' if h.get('is_fee_paid') else '❌'}")
+                    st.markdown(f"**Email:** {h.get('email', 'N/A')}")
+                    st.markdown(f"**Fee Paid:** {'✅' if h.get('is_fee_paid') else '❌'}")
                 
-                # Demote button
                 if st.button("👇 Demote to User", key=f"demote_{h.get('host_id', h.get('id'))}"):
                     host_id = h.get('host_id', h.get('id'))
                     demote_res = requests.post(
@@ -781,10 +1243,10 @@ def admin_dashboard():
                     st.subheader("Events")
                     for e in host_events:
                         with st.container(border=True):
-                            st.write(f"**{e.get('title', 'Untitled')}**")
-                            st.write(f"📍 {e.get('venue', 'No venue')} | 📅 {e.get('date', 'Unknown')}")
-                            st.write(f"🎟 Seats: {e.get('available_seats', 0)} / {e.get('total_seats', 0)}")
-                            st.write(f"💰 ₹{e.get('ticket_price', 0)}")
+                            st.markdown(f"**{e.get('title', 'Untitled')}**")
+                            st.markdown(f"📍 {e.get('venue', 'No venue')} | 📅 {e.get('date', 'Unknown')}")
+                            st.markdown(f"🎟 Seats: {e.get('available_seats', 0)} / {e.get('total_seats', 0)}")
+                            st.markdown(f"💰 ₹{e.get('ticket_price', 0)}")
                             
                             col1, col2, col3 = st.columns(3)
                             
@@ -801,7 +1263,6 @@ def admin_dashboard():
                                         st.error(del_res.text)
                             
                             with col2:
-                                # ADD THIS - View Document button
                                 if e.get("more_details"):
                                     st.link_button(
                                         "📄 View Document", 
@@ -819,18 +1280,20 @@ def admin_dashboard():
                                 st.markdown("**Bookings:**")
                                 for b in event_bookings:
                                     with st.container(border=True):
-                                        st.write(f"👤 {b.get('username', 'Unknown')} - {b.get('ticket_count', 0)} tickets")
-                                        
-                                        if st.button("Delete", key=f"admin_del_booking_{b.get('booking_id')}"):
-                                            del_res = requests.delete(
-                                                f"{BASE_URL}/admin/booking/{b.get('booking_id')}",
-                                                headers=headers_auth
-                                            )
-                                            if del_res.status_code == 200:
-                                                st.success("Booking deleted")
-                                                st.rerun()
-                                            else:
-                                                st.error(del_res.text)
+                                        col1, col2 = st.columns([3, 1])
+                                        with col1:
+                                            st.markdown(f"👤 {b.get('username', 'Unknown')} - {b.get('ticket_count', 0)} tickets")
+                                        with col2:
+                                            if st.button("Delete", key=f"admin_del_booking_{b.get('booking_id')}"):
+                                                del_res = requests.delete(
+                                                    f"{BASE_URL}/admin/booking/{b.get('booking_id')}",
+                                                    headers=headers_auth
+                                                )
+                                                if del_res.status_code == 200:
+                                                    st.success("Booking deleted")
+                                                    st.rerun()
+                                                else:
+                                                    st.error(del_res.text)
     
     # ================= TRANSACTIONS =================
     elif tab == "Transactions":
@@ -862,19 +1325,20 @@ def admin_dashboard():
             if not bookings:
                 st.info("No booking transactions found")
             else:
-                st.write(f"**Total Bookings:** {len(bookings)}")
+                st.metric("Total Bookings", len(bookings))
+                st.divider()
                 
                 for b in bookings:
                     with st.container(border=True):
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.write(f"**Booking ID:** {b.get('booking_id', 'N/A')}")
-                            st.write(f"**User:** {b.get('username', 'Unknown')}")
-                            st.write(f"**Email:** {b.get('user_email', 'N/A')}")
+                            st.markdown(f"**Booking ID:** {b.get('booking_id', 'N/A')}")
+                            st.markdown(f"**User:** {b.get('username', 'Unknown')}")
+                            st.markdown(f"**Email:** {b.get('user_email', 'N/A')}")
                         with col2:
-                            st.write(f"**Event:** {b.get('event_title', 'Unknown')}")
-                            st.write(f"**Tickets:** {b.get('ticket_count', 0)}")
-                            st.write(f"**Amount:** ₹{b.get('total_amount', b.get('payment_amount', 0))}")
+                            st.markdown(f"**Event:** {b.get('event_title', 'Unknown')}")
+                            st.markdown(f"**Tickets:** {b.get('ticket_count', 0)}")
+                            st.markdown(f"**Amount:** ₹{b.get('total_amount', b.get('payment_amount', 0))}")
         
         else:  # Hosting Transactions
             res = requests.get(f"{BASE_URL}/admin/hosting-transactions", headers=headers_auth)
@@ -891,11 +1355,11 @@ def admin_dashboard():
             else:
                 for t in transactions:
                     with st.container(border=True):
-                        st.write(f"**Company:** {t.get('company_name', 'Unknown')}")
-                        st.write(f"**Host ID:** {t.get('host_id', 'N/A')}")
-                        st.write(f"**Amount:** ₹{t.get('amount', 0)}")
-                        st.write(f"**Status:** {t.get('status', 'Unknown')}")
-                        st.write(f"**Date:** {t.get('created_at', 'Unknown')}")
+                        st.markdown(f"**Company:** {t.get('company_name', 'Unknown')}")
+                        st.markdown(f"**Host ID:** {t.get('host_id', 'N/A')}")
+                        st.markdown(f"**Amount:** ₹{t.get('amount', 0)}")
+                        st.markdown(f"**Status:** {t.get('status', 'Unknown')}")
+                        st.markdown(f"**Date:** {t.get('created_at', 'Unknown')}")
     
     # ================= PROMOTIONS =================
     elif tab == "Promotions":
@@ -913,18 +1377,17 @@ def admin_dashboard():
         else:
             for p in promotions:
                 with st.container(border=True):
-                    # Only show fields that exist in the data
                     if p.get('company_name'):
-                        st.subheader(p.get('company_name'))
+                        st.markdown(f"**Company:** {p.get('company_name')}")
                     elif p.get('username'):
-                        st.subheader(p.get('username'))
+                        st.markdown(f"**User:** {p.get('username')}")
                     
                     if p.get('amount'):
-                        st.write(f"**Amount:** ₹{p.get('amount')}")
+                        st.markdown(f"**Amount:** ₹{p.get('amount')}")
                     if p.get('status'):
-                        st.write(f"**Status:** {p.get('status')}")
+                        st.markdown(f"**Status:** {p.get('status')}")
                     if p.get('created_at'):
-                        st.write(f"**Date:** {p.get('created_at')}")
+                        st.markdown(f"**Date:** {p.get('created_at')}")
     
     # ================= WALLETS =================
     elif tab == "Wallets":
@@ -963,9 +1426,9 @@ def admin_dashboard():
                     with col1:
                         owner_type = w.get('owner_type', 'Unknown').upper()
                         owner_name = w.get('username') or w.get('company_name') or f"ID {w.get('owner_id', 'N/A')}"
-                        st.write(f"**{owner_type}:** {owner_name}")
+                        st.markdown(f"**{owner_type}:** {owner_name}")
                         if w.get('email'):
-                            st.write(f"📧 {w.get('email')}")
+                            st.markdown(f"📧 {w.get('email')}")
                     
                     with col2:
                         st.metric("Balance", f"₹{w.get('balance', 0):,}")

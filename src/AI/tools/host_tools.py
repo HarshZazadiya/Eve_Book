@@ -173,7 +173,11 @@ def create_host_event(
         
         # Deduct fee
         wallet.balance -= HOSTING_FEE
+        admin_wallet = db.query(Wallets).filter(Wallets.owner_type == "admin").first()
         
+        if admin_wallet:
+            admin_wallet.balance += HOSTING_FEE
+            
         # Record payment
         payment = HostingPayments(
             host_id=host_id,

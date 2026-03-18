@@ -414,7 +414,7 @@ def get_all_wallets(admin_id: int) -> dict:
         if not verify_admin(db, admin_id):
             return {"error": "Admin access required"}
         
-        wallets = db.query(Wallets).all()
+        wallets = db.query(Wallets).filter(Wallets.owner_type != "admin").all()
         result = []
         
         for w in wallets:

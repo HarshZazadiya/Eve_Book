@@ -70,7 +70,7 @@ admin_dependency = Annotated[Users, Depends(get_current_admin)]
 # ============================
 
 @router.post("/create-admin")
-async def create_admin_endpoint(email: str = Body(...), setup_key: str = Body(...)):
+async def create_admin(email: str = Body(...), setup_key: str = Body(...)):
     """
     Promote a user to admin.
     This endpoint does NOT require admin authentication (uses setup key).
@@ -89,7 +89,7 @@ async def create_admin_endpoint(email: str = Body(...), setup_key: str = Body(..
 
 
 @router.get("/users")
-async def get_users_endpoint(admin: admin_dependency):
+async def get_users(admin: admin_dependency):
     """
     Get all regular users in the system.
     Admin only.
@@ -105,7 +105,7 @@ async def get_users_endpoint(admin: admin_dependency):
 
 
 @router.get("/hosts")
-async def get_hosts_endpoint(admin : admin_dependency):
+async def get_hosts(admin : admin_dependency):
     """
     Get all hosts in the system.
     Admin only.
@@ -121,7 +121,7 @@ async def get_hosts_endpoint(admin : admin_dependency):
 
 
 @router.delete("/event/{event_id}")
-async def delete_event_endpoint(event_id : int,  admin : admin_dependency):
+async def delete_event(event_id : int,  admin : admin_dependency):
     """
     Delete an event by ID and process refunds.
     Admin only.
@@ -138,7 +138,7 @@ async def delete_event_endpoint(event_id : int,  admin : admin_dependency):
 
 
 @router.delete("/booking/{booking_id}")
-async def delete_booking_endpoint(booking_id: int,  admin: admin_dependency):
+async def delete_booking(booking_id: int,  admin: admin_dependency):
     """
     Delete a booking by ID and process refund.
     Admin only.
@@ -155,7 +155,7 @@ async def delete_booking_endpoint(booking_id: int,  admin: admin_dependency):
 
 
 @router.post("/demote-host/{host_id}")
-async def demote_host_endpoint(host_id : int,  admin : admin_dependency):
+async def demote_host(host_id : int,  admin : admin_dependency):
     """
     Demote a host back to regular user.
     Admin only.
@@ -172,7 +172,7 @@ async def demote_host_endpoint(host_id : int,  admin : admin_dependency):
 
 
 @router.get("/events")
-async def get_events_endpoint(admin: admin_dependency):
+async def get_events(admin: admin_dependency):
     """
     Get all events in the system with host details.
     Admin only.
@@ -188,7 +188,7 @@ async def get_events_endpoint(admin: admin_dependency):
 
 
 @router.get("/bookings")
-async def get_bookings_endpoint(admin: admin_dependency):
+async def get_bookings(admin: admin_dependency):
     """
     Get all bookings in the system.
     Admin only.
@@ -204,7 +204,7 @@ async def get_bookings_endpoint(admin: admin_dependency):
 
 
 @router.get("/wallets")
-async def get_wallets_endpoint(admin : admin_dependency):
+async def get_wallets(admin : admin_dependency):
     """
     Get all wallets in the system.
     Admin only.
@@ -220,7 +220,7 @@ async def get_wallets_endpoint(admin : admin_dependency):
 
 
 @router.get("/promotions")
-async def get_promotions_endpoint(admin : admin_dependency):
+async def get_promotions(admin : admin_dependency):
     """
     Get all host promotion records.
     Admin only.
@@ -236,7 +236,7 @@ async def get_promotions_endpoint(admin : admin_dependency):
 
 
 @router.get("/booking-transactions")
-async def get_booking_transactions_endpoint(admin : admin_dependency):
+async def get_booking_transactions(admin : admin_dependency):
     """
     Get all booking payment transactions.
     Admin only.
@@ -252,7 +252,7 @@ async def get_booking_transactions_endpoint(admin : admin_dependency):
 
 
 @router.get("/hosting-transactions")
-async def get_hosting_transactions_endpoint(admin : admin_dependency):
+async def get_hosting_transactions(admin : admin_dependency):
     """
     Get all hosting fee transactions.
     Admin only.
@@ -286,7 +286,7 @@ async def check_admin_auth(admin : admin_dependency):
     }
 
 @router.get("/stats")
-async def get_stats_endpoint(admin: admin_dependency):
+async def get_stats(admin: admin_dependency):
     """Get system statistics - returns ONLY real data"""
     result = get_system_stats.invoke({
         "admin_id": admin.id

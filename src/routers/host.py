@@ -40,23 +40,23 @@ class PaymentRequest(BaseModel):
     amount : int
 
 class EventUpdateRequest(BaseModel):
-    title: str
-    venue: str
-    date: str
-    seats: int
-    ticket_price: int
+    title : str
+    venue : str
+    date : str
+    seats : int
+    ticket_price : int
 # --------------------------------------------------
 # HOST INFO
 # --------------------------------------------------
 @router.get("/")
-async def get_info(host: host_dependency):
+async def get_info(host : host_dependency):
     """Get host information"""
     result = get_host_info.invoke({
-        "host_id": host.id
+        "host_id" : host.id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -67,11 +67,11 @@ async def get_info(host: host_dependency):
 async def get_events(host: host_dependency):
     """Get all events created by this host"""
     result = get_host_events.invoke({
-        "host_id": host.id
+        "host_id" : host.id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -80,13 +80,13 @@ async def get_events(host: host_dependency):
 # --------------------------------------------------
 @router.post("/event")
 async def create_event(
-    host: host_dependency,
-    title: str = Form(...),
-    venue: str = Form(...),
-    date: str = Form(...),
-    seats: int = Form(...),
-    ticket_price: int = Form(...),
-    document: UploadFile = File(None)
+    host : host_dependency,
+    title : str = Form(...),
+    venue : str = Form(...),
+    date : str = Form(...),
+    seats : int = Form(...),
+    ticket_price : int = Form(...),
+    document : UploadFile = File(None)
 ):
     """Create a new event"""
     
@@ -104,13 +104,13 @@ async def create_event(
     
     # Call the tool
     result = create_host_event.invoke({
-        "host_id": host.id,
-        "title": title,
-        "venue": venue,
-        "date": date,
-        "seats": seats,
-        "ticket_price": ticket_price,
-        "document_path": document_path
+        "host_id" : host.id,
+        "title" : title,
+        "venue" : venue,
+        "date" : date,
+        "seats" : seats,
+        "ticket_price" : ticket_price,
+        "document_path" : document_path
     })
     
     # Clean up temp file
@@ -118,7 +118,7 @@ async def create_event(
         os.remove(document_path)
     
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code = 400, detail = result["error"])
     
     return result
 
@@ -126,15 +126,15 @@ async def create_event(
 # DELETE EVENT
 # --------------------------------------------------
 @router.delete("/event/{event_id}")
-async def delete_event(host: host_dependency, event_id: int):
+async def delete_event(host : host_dependency, event_id : int):
     """Delete an event and process refunds"""
     result = delete_host_event.invoke({
-        "host_id": host.id,
-        "event_id": event_id
+        "host_id" : host.id,
+        "event_id" : event_id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -142,16 +142,16 @@ async def delete_event(host: host_dependency, event_id: int):
 # UPDATE EVENT
 # --------------------------------------------------
 @router.put("/event/{event_id}")
-async def update_event(event_id: int, event_data: EventUpdateRequest, host: host_dependency):
+async def update_event(event_id : int, event_data : EventUpdateRequest, host : host_dependency):
     """Update event details"""
     result = update_host_event.invoke({
-        "host_id": host.id,
-        "event_id": event_id,
-        "title": event_data.title,
-        "venue": event_data.venue,
-        "date": event_data.date,
-        "seats": event_data.seats,
-        "ticket_price": event_data.ticket_price
+        "host_id" : host.id,
+        "event_id" : event_id,
+        "title" : event_data.title,
+        "venue" : event_data.venue,
+        "date" : event_data.date,
+        "seats" : event_data.seats,
+        "ticket_price" : event_data.ticket_price
     })
     
     if "error" in result:
@@ -163,7 +163,7 @@ async def update_event(event_id: int, event_data: EventUpdateRequest, host: host
 # UPDATE EVENT DOCUMENT
 # --------------------------------------------------
 @router.put("/event_document/{event_id}")
-async def update_document(event_id: int, host: host_dependency, document: UploadFile = File(...)):
+async def update_document(event_id : int, host : host_dependency, document : UploadFile = File(...)):
     """Update just the document for an event"""
     
     # Validate file type
@@ -178,9 +178,9 @@ async def update_document(event_id: int, host: host_dependency, document: Upload
     try:
         # Call the tool
         result = update_event_document.invoke({
-            "host_id": host.id,
-            "event_id": event_id,
-            "pdf_path": temp_path
+            "host_id" : host.id,
+            "event_id" : event_id,
+            "pdf_path" : temp_path
         })
         
         if "error" in result:
@@ -197,25 +197,22 @@ async def update_document(event_id: int, host: host_dependency, document: Upload
 # LOGIN
 # --------------------------------------------------
 @router.post("/token")
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Host login endpoint"""
     host = authenticate_host(form_data.username, form_data.password, db)
     if not host:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(
-        entity_id=host.id,
-        entity_type="host",
-        role="host"
+        entity_id = host.id,
+        entity_type = "host",
+        role = "host"
     )
 
     return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "type": "host"
+        "access_token" : access_token,
+        "token_type" : "bearer",
+        "type" : "host"
     }
 
 # --------------------------------------------------

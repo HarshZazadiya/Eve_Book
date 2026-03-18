@@ -3,7 +3,7 @@ from pathlib import Path
 import base64
 import os
 from datetime import datetime
-from pypdf import PdfReader  # Changed from PyPDF2
+from pypdf import PdfReader
 import io
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -430,5 +430,6 @@ if __name__ == "__main__":
 
 
 # if __name__ == "__main__":
+#    """to connect with claude desktop via local mcp server connection type of STDIO"""
 #     print("🚀 File System MCP Server Starting...")
 #     mcp.run()    

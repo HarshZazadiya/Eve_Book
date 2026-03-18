@@ -33,14 +33,14 @@ user_dependency = Annotated[Users, Depends(get_current_user)]
 # USER INFO
 # --------------------------------------------------
 @router.get("/")
-async def get_user_info(user: user_dependency):
+async def get_user_info(user : user_dependency):
     """Get current user information"""
     result = get_user_profile.invoke({
-        "authenticated_user_id": user.id
+        "authenticated_user_id" : user.id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -48,12 +48,12 @@ async def get_user_info(user: user_dependency):
 # GET ALL EVENTS
 # --------------------------------------------------
 @router.get("/events")
-async def get_all_events(user: user_dependency):
+async def get_all_events(user : user_dependency):
     """Get all available events"""
     result = get_all_available_events.invoke({})
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -61,14 +61,14 @@ async def get_all_events(user: user_dependency):
 # GET MY BOOKINGS
 # --------------------------------------------------
 @router.get("/myEvents")
-async def get_my_events(user: user_dependency):
+async def get_my_events(user : user_dependency):
     """Get current user's bookings"""
     result = get_user_bookings.invoke({
-        "authenticated_user_id": user.id
+        "authenticated_user_id" : user.id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 
@@ -76,14 +76,14 @@ async def get_my_events(user: user_dependency):
 # PROMOTE TO HOST
 # --------------------------------------------------
 @router.post("/promote-to-host")
-async def promote_to_host(user: user_dependency):
+async def promote_to_host(user : user_dependency):
     """Promote current user to host (costs ₹10,000)"""
     result = promote_user_to_host.invoke({
-        "authenticated_user_id": user.id
+        "authenticated_user_id" : user.id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code = 400, detail = result["error"])
     
     return result
 
@@ -91,15 +91,15 @@ async def promote_to_host(user: user_dependency):
 # BOOK EVENT
 # --------------------------------------------------
 @router.post("/event/{event_id}")
-async def book_event(event_id: int, user: user_dependency):
+async def book_event(event_id : int, user : user_dependency):
     """Book a ticket for an event"""
     result = book_event_for_user.invoke({
-        "authenticated_user_id": user.id,
-        "event_id": event_id
+        "authenticated_user_id" : user.id,
+        "event_id" : event_id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code = 400, detail = result["error"])
     
     return result
 
@@ -107,15 +107,15 @@ async def book_event(event_id: int, user: user_dependency):
 # CANCEL BOOKING
 # --------------------------------------------------
 @router.delete("/booking/{booking_id}")
-async def cancel_booking(booking_id: int, user: user_dependency):
+async def cancel_booking(booking_id : int, user : user_dependency):
     """Cancel a booking and get refund"""
     result = cancel_user_booking.invoke({
-        "authenticated_user_id": user.id,
-        "booking_id": booking_id
+        "authenticated_user_id" : user.id,
+        "booking_id" : booking_id
     })
     
     if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code = 404, detail = result["error"])
     
     return result
 

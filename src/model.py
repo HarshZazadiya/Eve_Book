@@ -9,6 +9,7 @@ class ChatThread(Base):
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(Integer, nullable=False)  # Can be user_id or host_id
     owner_type = Column(String(20), nullable=False)  # 'user', 'host', or 'admin'
+    thread_name = Column(String(200), nullable=False, default="New Chat")
     created_at = Column(DateTime, server_default=func.now())
 
     messages = relationship("ChatMessage", back_populates="thread", cascade="all, delete")
