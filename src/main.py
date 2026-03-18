@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from Eve_Book.src.routers import wallets
 from database import engine
 from database import Base
 from routers import auth, user, host, chatbot, wallets

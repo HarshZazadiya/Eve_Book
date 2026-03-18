@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from redis.asyncio import Redis
 
 router = APIRouter(
-        prefix = "/default", 
-        tags = ["default"]
+        prefix = "/wallets", 
+        tags = ["wallet"]
     )
 
 # ── CONFIGURATION ─────────────────────────────────────────────

@@ -598,17 +598,19 @@ def wallet_ui():
     </div>
     """, unsafe_allow_html=True)
     
-    r = requests.get(f"{BASE_URL}/myWallet", headers=headers())
+    r = requests.get(f"{BASE_URL}/wallets/myWallet", headers=headers())
     
     if r.status_code == 200:
         data = r.json()
         balance = data.get("balance") or data.get("wallet_balance") or 0
         
         st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-                    padding: 2rem; border-radius: 24px; text-align: center; margin-bottom: 2rem;'>
-            <div style='color: var(--gray); font-size: 0.9rem; margin-bottom: 0.5rem;'>Current Balance</div>
-            <div style='font-size: 3rem; font-weight: 600; color: black;'>₹ {balance:,.2f}</div>
+        <div style='background: linear-gradient(135deg, #1a2a1a 0%, #0d2b1a 100%);
+                    border: 1px solid #2a5c3a;
+                    padding: 2.5rem 2rem; border-radius: 24px; text-align: center; margin-bottom: 2rem;
+                    box-shadow: 0 4px 24px rgba(16, 185, 129, 0.12);'>
+            <div style='color: #6ee7b7; font-size: 0.85rem; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.75rem;'>Current Balance</div>
+            <div style='font-size: 3rem; font-weight: 700; color: #ecfdf5; letter-spacing: -0.02em;'>₹ {balance:,.2f}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -617,11 +619,11 @@ def wallet_ui():
     
     st.markdown("""
     <div style='display: flex; align-items: center; gap: 0.5rem; margin: 2rem 0 1rem;'>
-        <div style='background: #f1f5f9; width: 30px; height: 30px; border-radius: 8px;
-                    display: flex; align-items: center; justify-content: center; color: var(--dark);'>
+        <div style='background: #1e3a2f; border: 1px solid #2a5c3a; width: 30px; height: 30px; border-radius: 8px;
+                    display: flex; align-items: center; justify-content: center; color: #6ee7b7;'>
             ➕
         </div>
-        <div style='font-size: 1.2rem; font-weight: 500;'>Add Money</div>
+        <div style='font-size: 1.2rem; font-weight: 500; color: #e2e8f0;'>Add Money</div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -632,7 +634,7 @@ def wallet_ui():
         if st.button("➕ Add Money", use_container_width=True, type="primary"):
             with st.spinner("Processing..."):
                 response = requests.post(
-                    f"{BASE_URL}/topUp",
+                    f"{BASE_URL}/wallets/topUp",
                     headers=headers(),
                     json={"amount": amount}
                 )
@@ -1118,7 +1120,7 @@ def admin_dashboard():
     headers_auth = headers()
     
     tab = smart_tabs(
-        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "AI ChatBot"],
+        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "Stats", "AI ChatBot"],
         key="admin_tab"
     )
     
@@ -1329,16 +1331,37 @@ def admin_dashboard():
                 st.divider()
                 
                 for b in bookings:
-                    with st.container(border=True):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(f"**Booking ID:** {b.get('booking_id', 'N/A')}")
-                            st.markdown(f"**User:** {b.get('username', 'Unknown')}")
-                            st.markdown(f"**Email:** {b.get('user_email', 'N/A')}")
-                        with col2:
-                            st.markdown(f"**Event:** {b.get('event_title', 'Unknown')}")
-                            st.markdown(f"**Tickets:** {b.get('ticket_count', 0)}")
-                            st.markdown(f"**Amount:** ₹{b.get('total_amount', b.get('payment_amount', 0))}")
+                    amount = b.get('total_amount', b.get('payment_amount', 0))
+                    st.markdown(f"""
+                    <div style='background:#131c2e; border:1px solid #1e3a5f; border-radius:14px;
+                                padding:1.1rem 1.4rem; margin-bottom:0.75rem;
+                                display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem 1.5rem;'>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Booking ID</div>
+                            <div style='color:#e2e8f0; font-weight:600;'>#{b.get('booking_id','N/A')}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>User</div>
+                            <div style='color:#e2e8f0; font-weight:600;'>{b.get('username','Unknown')}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Amount</div>
+                            <div style='color:#34d399; font-weight:700; font-size:1.05rem;'>₹{amount}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Email</div>
+                            <div style='color:#94a3b8;'>{b.get('user_email','N/A')}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Event</div>
+                            <div style='color:#94a3b8;'>{b.get('event_title','Unknown')}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Tickets</div>
+                            <div style='color:#94a3b8;'>{b.get('ticket_count',0)}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
         
         else:  # Hosting Transactions
             res = requests.get(f"{BASE_URL}/admin/hosting-transactions", headers=headers_auth)
@@ -1354,12 +1377,34 @@ def admin_dashboard():
                 st.info("No hosting transactions")
             else:
                 for t in transactions:
-                    with st.container(border=True):
-                        st.markdown(f"**Company:** {t.get('company_name', 'Unknown')}")
-                        st.markdown(f"**Host ID:** {t.get('host_id', 'N/A')}")
-                        st.markdown(f"**Amount:** ₹{t.get('amount', 0)}")
-                        st.markdown(f"**Status:** {t.get('status', 'Unknown')}")
-                        st.markdown(f"**Date:** {t.get('created_at', 'Unknown')}")
+                    status = t.get('status', 'Unknown')
+                    status_color = "#34d399" if status == "success" else "#f87171" if status == "failed" else "#fbbf24"
+                    st.markdown(f"""
+                    <div style='background:#131c2e; border:1px solid #1e3a5f; border-radius:14px;
+                                padding:1.1rem 1.4rem; margin-bottom:0.75rem;
+                                display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem 1.5rem;'>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Company</div>
+                            <div style='color:#e2e8f0; font-weight:600;'>{t.get('company_name','Unknown')}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Amount</div>
+                            <div style='color:#34d399; font-weight:700; font-size:1.05rem;'>₹{t.get('amount',0)}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Status</div>
+                            <div style='color:{status_color}; font-weight:600;'>{status}</div>
+                        </div>
+                        <div>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Host ID</div>
+                            <div style='color:#94a3b8;'>#{t.get('host_id','N/A')}</div>
+                        </div>
+                        <div style='grid-column:span 2;'>
+                            <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em;'>Date</div>
+                            <div style='color:#94a3b8;'>{t.get('created_at','Unknown')}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
     
     # ================= PROMOTIONS =================
     elif tab == "Promotions":
@@ -1388,6 +1433,54 @@ def admin_dashboard():
                         st.markdown(f"**Status:** {p.get('status')}")
                     if p.get('created_at'):
                         st.markdown(f"**Date:** {p.get('created_at')}")
+    
+    # ================= STATS =================
+    elif tab == "Stats":
+        res = requests.get(f"{BASE_URL}/admin/stats", headers=headers_auth)
+        
+        if res.status_code != 200:
+            st.error("Failed to fetch stats")
+            return
+        
+        stats = res.json()
+        
+        if "error" in stats:
+            st.error(stats["error"])
+            return
+        
+        st.markdown("""
+        <div style='display:flex; align-items:center; gap:0.6rem; margin-bottom:1.5rem;'>
+            <div style='background:linear-gradient(135deg,#3b5bdb,#4c6ef5); width:38px; height:38px;
+                        border-radius:10px; display:flex; align-items:center; justify-content:center;
+                        font-size:1.1rem;'>📊</div>
+            <div>
+                <div style='font-size:1.3rem; font-weight:600; color:#f1f5f9;'>System Stats</div>
+                <div style='color:#94a3b8; font-size:0.85rem;'>Platform overview</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Render each key-value from the stats response as a clean card grid
+        items = [(k.replace("_", " ").title(), v) for k, v in stats.items()]
+        
+        # Rows of 3
+        for i in range(0, len(items), 3):
+            row = items[i:i+3]
+            cols = st.columns(3)
+            for col, (label, value) in zip(cols, row):
+                with col:
+                    # Colour-code monetary values green, counts blue
+                    is_money = isinstance(value, (int, float)) and ("amount" in label.lower() or "balance" in label.lower() or "revenue" in label.lower())
+                    val_color = "#34d399" if is_money else "#93c5fd"
+                    display_val = f"₹{value:,.2f}" if is_money and isinstance(value, float) else f"₹{value:,}" if is_money else (f"{value:,}" if isinstance(value, (int, float)) else str(value))
+                    st.markdown(f"""
+                    <div style='background:#131c2e; border:1px solid #1e3a5f; border-radius:14px;
+                                padding:1.2rem 1.2rem; margin-bottom:0.75rem; text-align:center;'>
+                        <div style='color:#64748b; font-size:0.72rem; text-transform:uppercase;
+                                    letter-spacing:0.07em; margin-bottom:0.4rem;'>{label}</div>
+                        <div style='color:{val_color}; font-size:1.6rem; font-weight:700;'>{display_val}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
     
     # ================= WALLETS =================
     elif tab == "Wallets":
