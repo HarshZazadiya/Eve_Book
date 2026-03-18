@@ -145,6 +145,111 @@ st.markdown("""
 # =================================================
 # CHAT INTERFACE — clean Streamlit-native UI
 # =================================================
+def hitl_settings_ui():
+    st.markdown("""
+    <div style='margin-bottom: 1.5rem;'>
+        <div style='font-size: 1.4rem; font-weight: 600;'>⚙️ HITL Settings</div>
+        <div style='color: #94a3b8; font-size: 0.9rem;'>
+            Choose which actions require your approval before execution
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    auth_headers = {
+        "Authorization": f"Bearer {st.session_state.token}"
+    }
+
+    # ─────────────────────────────
+    # Fetch available tools
+    # ─────────────────────────────
+    try:
+        tools_res = requests.get(f"{BASE_URL}/chat/tools", headers=auth_headers)
+        if tools_res.status_code == 200:
+            available_tools = tools_res.json().get("tools", [])
+        else:
+            st.error("❌ Failed to load available tools")
+            return
+    except Exception as e:
+        st.error(f"❌ Error loading tools: {e}")
+        return
+
+    # ─────────────────────────────
+    # Fetch current HITL config
+    # ─────────────────────────────
+    try:
+        config_res = requests.get(f"{BASE_URL}/chat/settings/hitl", headers=auth_headers)
+        if config_res.status_code == 200:
+            current_tools = config_res.json().get("sensitive_tools", [])
+        else:
+            current_tools = []
+    except:
+        current_tools = []
+
+    # ─────────────────────────────
+    # Clean + sort tools
+    # ─────────────────────────────
+    # Remove duplicates + sort nicely
+    tool_map = {}
+    for t in available_tools:
+        name = t.get("name")
+        if name:
+            tool_map[name] = t
+
+    sorted_tools = sorted(tool_map.values(), key=lambda x: x["name"])
+
+    selected_tools = []
+
+    # ─────────────────────────────
+    # UI: tool selection
+    # ─────────────────────────────
+    with st.container(border=True):
+        if not sorted_tools:
+            st.warning("No tools available.")
+            return
+
+        for tool in sorted_tools:
+            name = tool["name"]
+            desc = tool.get("description", "")
+
+            label = name.replace("_", " ").title()
+
+            checked = name in current_tools
+
+            if st.checkbox(
+                f"🔒 {label}",
+                value=checked,
+                key=f"hitl_{name}",
+                help=desc if desc else None
+            ):
+                selected_tools.append(name)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ─────────────────────────────
+    # Save button
+    # ─────────────────────────────
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        if st.button("💾 Save Settings", use_container_width=True, type="primary"):
+            try:
+                resp = requests.post(
+                    f"{BASE_URL}/chat/settings/hitl",
+                    headers=auth_headers,
+                    json={"tools": selected_tools}
+                )
+
+                if resp.status_code == 200:
+                    st.success("✅ Settings updated successfully")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed: {resp.text}")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+
+    with col2:
+        if st.button("🔄 Reset", use_container_width=True):
+            st.rerun()
 
 def chat_interface():
     """Chat interface with HITL approval + live tool-call status"""
@@ -744,12 +849,15 @@ st.markdown("<hr style='margin: 1.5rem 0;'>", unsafe_allow_html=True)
 # =================================================
 def user_dashboard():
     menu = smart_tabs(
-        ["Wallet", "Browse Events", "My Bookings", "Promote To Host", "AI ChatBot"],
+        ["Wallet", "Browse Events", "My Bookings", "Promote To Host", "AI ChatBot", "HITL Settings"],
         key="user_tab"
     )
     
     if menu == "AI ChatBot":
         chat_interface()
+
+    if menu == "HITL Settings":
+        hitl_settings_ui()
     
     if menu == "Wallet":
         wallet_ui()
@@ -913,10 +1021,13 @@ def user_dashboard():
 # =================================================
 def host_dashboard():
     menu = smart_tabs(
-        ["Wallet", "Create Event", "My Events", "AI ChatBot"],
+        ["Wallet", "Create Event", "My Events", "AI ChatBot", "HITL Settings"],
         key="host_tab"
     )
     
+    if menu == "HITL Settings":
+        hitl_settings_ui()
+        
     if menu == "AI ChatBot":
         chat_interface()
     
@@ -1120,10 +1231,13 @@ def admin_dashboard():
     headers_auth = headers()
     
     tab = smart_tabs(
-        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "Stats", "AI ChatBot"],
+        ["Users", "Hosts", "Transactions", "Promotions", "Wallets", "Stats", "AI ChatBot", "HITL Settings"],
         key="admin_tab"
     )
-    
+
+    if tab == "HITL Settings":
+        hitl_settings_ui()
+        
     if tab == "AI ChatBot":
         chat_interface()
     

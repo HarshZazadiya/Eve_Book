@@ -1,30 +1,7 @@
-from sqlalchemy import Column, Integer, ForeignKey, Date, text, String, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, ForeignKey, Date, text, String, Boolean, DateTime, Text, JSON
 from database import Base
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-
-class ChatThread(Base):
-    __tablename__ = "chat_threads"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, nullable=False)  # Can be user_id or host_id
-    owner_type = Column(String(20), nullable=False)  # 'user', 'host', or 'admin'
-    thread_name = Column(String(200), nullable=False, default="New Chat")
-    created_at = Column(DateTime, server_default=func.now())
-
-    messages = relationship("ChatMessage", back_populates="thread", cascade="all, delete")
-
-
-class ChatMessage(Base):
-    __tablename__ = "chat_messages"
-
-    id = Column(Integer, primary_key=True, index=True)
-    thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable=False)
-    role = Column(String(20))  # user / assistant
-    content = Column(Text)
-    created_at = Column(DateTime, server_default=func.now())
-
-    thread = relationship("ChatThread", back_populates="messages")
     
 class Users(Base):
     __tablename__ = "users"
@@ -107,4 +84,35 @@ class Wallets(Base):
     id = Column(Integer, primary_key = True, index = True)
     owner_type = Column(String(10))
     owner_id = Column(Integer, nullable = False)
-    balance = Column(Integer, server_default=text("0"))
+    balance = Column(Integer, server_default = text("0"))
+
+class ChatThread(Base):
+    __tablename__ = "chat_threads"
+
+    id = Column(Integer, primary_key = True, index = True)
+    owner_id = Column(Integer, nullable = False)  # Can be user_id or host_id
+    owner_type = Column(String(20), nullable = False)  # 'user', 'host', or 'admin'
+    thread_name = Column(String(200), nullable = False, default = "New Chat")
+    created_at = Column(DateTime, server_default = func.now())
+
+    messages = relationship("ChatMessage", back_populates = "thread", cascade = "all, delete")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key = True, index = True)
+    thread_id = Column(Integer, ForeignKey("chat_threads.id"), nullable = False)
+    role = Column(String(20))  # user / assistant
+    content = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+
+    thread = relationship("ChatThread", back_populates="messages")
+
+class UserSettings(Base):
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key = True, index = True)
+    user_id = Column(Integer, nullable = False)
+    user_role = Column(String(20), nullable = False)
+    sensitive_tools = Column(JSON, default=[])

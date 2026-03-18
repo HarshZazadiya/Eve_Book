@@ -13,6 +13,7 @@ from AI.tools.default_tools import default_tools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 import os
 from AI.mcp_manager import get_mcp_tools
+from langgraph.prebuilt import ToolNode
 
 # ============================================================
 # AGENT STATE
@@ -20,21 +21,6 @@ from AI.mcp_manager import get_mcp_tools
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     user_info: Dict[str, Any]
-
-# ============================================================
-# SENSITIVE TOOLS — require user approval before execution
-# ============================================================
-SENSITIVE_TOOLS = {
-    "delete_event",
-    "delete_user",
-    "delete_booking",
-    "delet_file",
-    "delete_pdf",
-    "update_file",
-    "update_pdf",
-    "top_up_wallet",
-    "change_directory"
-}
 
 # ============================================================
 # RAG TOOL
@@ -111,7 +97,11 @@ async def agent_node(state: AgentState):
 
     # ── HITL: pause if any called tool is sensitive ──────────
     if response.tool_calls:
-        sensitive_calls = [tc for tc in response.tool_calls if tc["name"] in SENSITIVE_TOOLS]
+        user_sensitive_tools = set(user_info.get("sensitive_tools", []))
+        sensitive_calls = [
+            tc for tc in response.tool_calls
+            if tc["name"] in user_sensitive_tools
+        ]
 
         if sensitive_calls:
             tool_names = [tc["name"] for tc in sensitive_calls]
@@ -151,8 +141,6 @@ async def agent_node(state: AgentState):
 # ============================================================
 # TOOL NODE
 # ============================================================
-from langgraph.prebuilt import ToolNode
-
 tool_node_cache = {}
 
 async def tool_node(state: AgentState):

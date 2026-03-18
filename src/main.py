@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from database import engine
 from database import Base
-from routers import auth, user, host, chatbot, wallets
+from routers import auth, user, host, chatbot, default
 from model import Wallets
 from database import SessionLocal
 from redis.asyncio import Redis
@@ -147,7 +147,7 @@ app.include_router(user.router)
 app.include_router(host.router)
 app.include_router(admin.router)
 app.include_router(chatbot.router)
-app.include_router(wallets.router)
+app.include_router(default.router)
 
 @app.get("/health")
 async def health_check():

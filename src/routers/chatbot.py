@@ -8,8 +8,9 @@ import os
 from AI.graph import run_agent
 from database import SessionLocal
 from model import Users, Hosts, ChatThread, ChatMessage
-from AI.RAG import llm, search_documents, get_vector_store
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from AI.user_config import get_user_sensitive_tools, update_user_sensitive_tools
+
 
 router = APIRouter(
         prefix = "/chat", 
@@ -60,6 +61,12 @@ class MessageInfo(BaseModel):
     role : str
     content : str
     created_at : Optional[str] = None
+
+class RenameRequest(BaseModel):
+    thread_name: str
+
+class UpdateSettingsRequest(BaseModel):
+    tools: list[str]
 
 # ============================================================
 # AUTHENTICATION
@@ -161,10 +168,14 @@ async def ask_chat(request : ChatRequest, user : dict = Depends(get_current_user
             print(f"👤 Human approval: {request.human_approval}")
         print(f"{'='*60}")
 
+
+        user_sensitive_tools = get_user_sensitive_tools(db, user["id"], user["role"])
+
         user_info = {
-            "id" :         user["id"],
-            "role" :       user["role"],
-            "name" :       user["name"],
+            "id": user["id"],
+            "role": user["role"],
+            "name": user["name"],
+            "sensitive_tools": user_sensitive_tools
         }
 
         # ── HITL resume: user replied yes/no ─────────────────
@@ -284,9 +295,6 @@ async def delete_thread(thread_id: int,user: dict = Depends(get_current_user),db
     
     return {"message": "Thread deleted successfully"}
 
-class RenameRequest(BaseModel):
-    thread_name: str
-
 @router.patch("/threads/{thread_id}/rename")
 async def rename_thread(thread_id : int, body : RenameRequest, user : dict = Depends(get_current_user), db : Session = Depends(get_db)):
     """Rename a thread using the thread_name column on ChatThread"""
@@ -302,3 +310,64 @@ async def rename_thread(thread_id : int, body : RenameRequest, user : dict = Dep
     thread.thread_name = body.thread_name.strip()[:200]
     db.commit()
     return {"id": thread_id, "thread_name": thread.thread_name}
+
+@router.post("/settings/hitl")
+async def update_hitl_settings(body : UpdateSettingsRequest, user : dict = Depends(get_current_user), db : Session = Depends(get_db)):
+    settings = update_user_sensitive_tools(db, user["id"], user["role"], body.tools)
+
+    return {
+        "message" : "Settings updated",
+        "sensitive_tools" : settings.sensitive_tools
+    }
+
+@router.get("/settings/hitl")
+async def get_hitl_settings(user : dict = Depends(get_current_user), db : Session = Depends(get_db)):
+    tools = get_user_sensitive_tools(db, user["id"], user["role"])
+    return {"sensitive_tools": tools}
+
+
+@router.get("/tools")
+async def get_available_tools(user: dict = Depends(get_current_user)):
+
+    role = user["role"]
+
+    # Import here to avoid circular imports
+    from AI.tools.admin_tools import admin_tools
+    from AI.tools.host_tools import host_tools
+    from AI.tools.user_tools import user_tools
+    from AI.tools.default_tools import default_tools
+    from AI.mcp_manager import get_mcp_tools
+    from AI.graph import search_event_documents
+
+    tools = [search_event_documents]
+    mcp_tools = await get_mcp_tools()
+    if role == "admin":
+        tools.extend(admin_tools)
+    elif role == "host":
+        tools.extend(host_tools)
+    elif role == "user":
+        tools.extend(user_tools)
+
+    tools.extend(default_tools)
+    tools.extend(mcp_tools)
+    # Format response
+    tool_list = []
+
+    for t in tools:
+        try:
+            name = getattr(t, "name", None)
+            description = getattr(t, "description", None)
+
+            # fallback for weird tools
+            if not name:
+                name = str(t)
+
+            tool_list.append({
+                "name": str(name),
+                "description": str(description) if description else ""
+            })
+
+        except Exception as e:
+            print(f"⚠️ Skipping tool due to error: {e}")
+            continue
+    return {"tools": tool_list}

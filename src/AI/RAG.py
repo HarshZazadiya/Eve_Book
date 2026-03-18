@@ -25,7 +25,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 print("🔄 Initializing Kimi K2 via Groq...")
 llm = ChatGroq(
-    model = "moonshotai/kimi-k2-instruct",
+    # model = "moonshotai/kimi-k2-instruct",
+    model = "llama-3.3-70b-versatile",
     temperature = 0,
     max_tokens = 2048,
     groq_api_key = os.getenv("GROQ_API_KEY")
