@@ -1,4 +1,4 @@
-# EveBook — AI-Powered Event Booking Platform
+# 🎟  EveBook — AI-Powered Event Booking Platform
 
 EveBook is a full-stack event booking platform with an integrated AI assistant. It is built with **FastAPI** (backend), **Streamlit** (frontend), and **PostgreSQL** (database with pgvector). The AI layer is powered by **LangGraph**, **Groq (Kimi K2)**, **FAISS**, and a local **MCP server** for file-system operations.
 
@@ -20,7 +20,7 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 
 ---
 
-## Architecture Overview
+## 🚀 Architecture Overview
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -32,17 +32,17 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 ┌──────────────────────▼────────────────────────────┐
 │              FastAPI Backend (main.py)            │
 │  /auth  /user  /host  /admin  /chat  /default     │
-└─────┬────────────────────────┬────────────────────┘
-      │                        │
- PostgreSQL               LangGraph Agent
- (pgvector)               + Groq Kimi K2
- SQLAlchemy               + FAISS RAG
-                          + MCP (SSE :8001)
+└─────┬───────────────────────────────────┬─────────┘
+      │                                   │
+  PostgreSQL                        LangGraph Agent
+  (pgvector)                        + Groq Kimi K2
+  SQLAlchemy                        + FAISS RAG
+                                    + MCP (SSE :8001)
 ```
 
 ---
 
-## Features
+## 🚀 Features
 
 ### Platform
 
@@ -55,7 +55,7 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 - **PDF documents** — event PDFs are stored in `uploads/` and served as static files; both the UI and the AI chatbot can reference them
 - **Admin dashboard** — full visibility into users, hosts, events, bookings, wallets, transactions, promotions, and platform stats
 
-### AI Chatbot (all roles)
+## 🧠 AI Chatbot (all roles)
 
 - **Persistent multi-turn conversations** — threads are stored in PostgreSQL; the LangGraph checkpointer keeps full graph state per thread
 - **Thread management** — create new conversations, rename threads, delete threads, load chat history
@@ -69,7 +69,7 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 
 ---
 
-## Tech Stack
+## ⚡ Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -92,7 +92,7 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 
 ---
 
-## Project Structure
+## 📂 Project Structure
 
 ```
 src/
@@ -139,7 +139,7 @@ src/
 
 ---
 
-## Database Models
+## 📂 Database Models
 
 | Table | Description |
 |---|---|
@@ -158,7 +158,7 @@ src/
 
 ---
 
-## API Endpoints
+## 📂 API Endpoints
 
 ### Auth — `/auth`
 
@@ -236,33 +236,35 @@ src/
 
 ---
 
-## AI System
+## 🧠 AI System
 
 ### LangGraph Agent Graph
 
 The agent graph runs per-request and persists state to PostgreSQL via `AsyncPostgresSaver`.
 
 ```
-memory_retriever_node
-        │
-      agent_node  ◄──────────────────┐
-        │                            │
-   ┌────▼───────┐                    │
-   │ tool calls?│                    │
-   │  yes / no  │                    │
-   └──┬────┬────┘                    │
-      │    │                         │
-   tools   checker_node              │
-      │    │ (token check)           │
-      │    ▼                         │
-      │  summarizer_graph (if needed)│
-      │    │                         │
-      │  extractor_graph ────────────┘
-      │    │
-     END   END
+    memory_retriever_node
+             │
+         agent_node  ◄───────────────────────┐
+             │                               │
+     ┌─────▼───────┐                         │ 
+     │ tool calls? │                         │
+┌───►│  yes / no   │                         │
+│    └───┬──────┬──┘                         │
+│        │      │                            │
+│      tools   checker_node                  │
+└────────┘      │ (token check)              │
+                ▼                            │
+           summarizer_graph (if needed) ─────│
+                │                            │
+           extractor_graph ──────────────────┘
+                │
+                │
+                ▼
+               END
 ```
 
-**Nodes:**
+## Nodes
 
 - `memory_retriever_node` — runs a pgvector similarity search against the `memories` table for the current query; injects up to 2 matching memories into context
 - `agent_node` — binds the LLM to all role-appropriate tools, injects system prompt + summary + memories, calls Kimi K2; if a sensitive tool is requested, calls `langgraph.interrupt()` and waits for `Command(resume=...)`
@@ -270,7 +272,7 @@ memory_retriever_node
 - `checker_node` — counts approximate tokens in the message list; if over 3,500 tokens and more than 10 messages, delegates to the summarizer subgraph
 - `extractor_node` — delegates to the extractor subgraph to persist new memories
 
-### HITL Flow
+### ❌ HITL Flow
 
 1. User sends a message
 2. Agent decides to call a tool that is in the user's sensitive tool list
@@ -280,7 +282,7 @@ memory_retriever_node
 6. Frontend POSTs back to `/chat/ask` with `human_approval: "yes"` or `"no"` and the original message
 7. Backend calls `graph.ainvoke(Command(resume=...))` to resume the graph from the exact interrupt point
 
-### RAG Pipeline
+### 🔗 RAG Pipeline
 
 On startup, `build_fresh_vector_store()` scans `uploads/` for all PDFs, loads and chunks them (`chunk_size=300, overlap=30`), tags each chunk with `event_id` extracted from the filename convention `{host_id}_{event_id}_{title}.pdf`, and builds a FAISS index. The index is deleted on shutdown.
 
@@ -288,11 +290,11 @@ When a host creates or updates an event, the new PDF is immediately added to the
 
 The agent has access to `search_event_documents(query)` which performs a similarity search and returns the top 3 chunks with event ID and source file metadata.
 
-### Memory System
+### 🧠 Memory System
 
 After each completed turn, the extractor subgraph sends the last 10 messages to `llama-3.3-70b-versatile` with a structured output schema (`ExtractedMemory`). Extracted memories are typed as `preference`, `personal/fact`, `goal`, or `habit` and stored with a 384-dim embedding (MiniLM). On each subsequent turn, `search_memory()` retrieves the top 2 semantically similar memories via pgvector cosine distance and injects them silently into the agent's context.
 
-### Available Tools by Role
+### ⚡Available Tools by Role
 
 **All roles (default_tools):**
 - `get_wallet_balance` — check wallet balance
@@ -332,7 +334,7 @@ After each completed turn, the extractor subgraph sends the last 10 messages to 
 
 ---
 
-## MCP File Server
+## 🛠 MCP File Server
 
 The local MCP server runs as a separate process on `http://127.0.0.1:8001/sse` using FastMCP with SSE transport.
 
@@ -390,7 +392,7 @@ LANGCHAIN_PROJECT=eve_book
 
 ---
 
-## Setup & Running
+## ✅ Setup & Running
 
 ### 1. Start PostgreSQL (with pgvector)
 
@@ -409,7 +411,7 @@ pip install -r requirements.txt
 ### 3. Start the MCP file server
 
 ```bash
-cd AI/local_mcp
+cd src/AI/local_mcp/file_handle
 uv run python file_handle/file_handling_server.py
 ```
 
@@ -438,7 +440,7 @@ Runs on `http://localhost:8501`.
 
 ---
 
-## Role System
+## 🛠 Role System
 
 | Role | How obtained | Key capabilities |
 |---|---|---|
@@ -452,7 +454,7 @@ JWT tokens encode `id`, `type` (`user` or `host`), and `role` (`user`, `host`, o
 
 ---
 
-## Notes
+## 👨‍💻 Notes
 
 - The FAISS index is rebuilt from scratch on every startup and deleted on shutdown. It is not persisted between runs; all PDFs must remain in `uploads/` for RAG to work.
 - Redis is optional. If `REDIS_URL` is not set, host tool caching is simply disabled and operations fall back to direct database queries.
