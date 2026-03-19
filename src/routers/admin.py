@@ -1,10 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
-from typing import Annotated
-from sqlalchemy.orm import Session
-from database import SessionLocal
-from model import Users
-from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
 from jose import jwt
+from model import Users
+from typing import Annotated
+from database import SessionLocal
+from sqlalchemy.orm import Session
 from AI.tools.admin_tools import (
     promote_to_admin,
     get_all_users,
@@ -21,6 +19,8 @@ from AI.tools.admin_tools import (
     get_system_stats
 )
 from model import Events, Users, Hosts, Bookings, Wallets
+from fastapi import APIRouter, Depends, HTTPException, Body
+from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 

@@ -1,26 +1,23 @@
-from fastapi import FastAPI
-from database import engine
-from database import Base
-from routers import auth, user, host, chatbot, default
-from model import Wallets
-from database import SessionLocal
-from redis.asyncio import Redis
-from routers import admin
 import os
-from contextlib import asynccontextmanager
-from model import Users
+import sys
+import atexit
+import signal
+from fastapi import FastAPI
+from redis.asyncio import Redis
+from model import Wallets, Users
+from database import SessionLocal
+from database import engine, Base
 from routers.auth import bcrypt_context
+from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 from AI.RAG import get_vector_store, cleanup_vector_store
 from AI.graph import init_checkpointer, close_checkpointer
-import atexit
-import signal
-import sys
+from routers import auth, user, host, chatbot, default, admin
 
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY", "dev_admin_key")
 
 # Global Redis client
-redis_client = None
+# redis_client = None
 
 # ============================================================
 # CLEANUP FUNCTION
@@ -56,24 +53,24 @@ async def lifespan(app: FastAPI):
     print(f"✅ FAISS ready with {store.index.ntotal} vectors")
 
     # 2. Initialize Redis with connection test (INSIDE lifespan function)
-    global redis_client
-    REDIS_URL = os.getenv("REDIS_URL")
-    if REDIS_URL:
-        try:
-            # Try to create Redis client with timeout
-            test_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+    # global redis_client
+    # REDIS_URL = os.getenv("REDIS_URL")
+    # if REDIS_URL:
+    #     try:
+    #         # Try to create Redis client with timeout
+    #         test_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
             
-            # Test the connection - THIS IS NOW INSIDE AN ASYNC FUNCTION
-            await test_client.ping()
-            redis_client = test_client
-            print(f"✅ Redis connected successfully to {REDIS_URL}")
-        except Exception as e:
-            print(f"⚠️ Redis connection failed: {e}")
-            print("⚠️ Redis caching disabled - wallet will still work")
-            redis_client = None
-    else:
-        print("⚠️ REDIS_URL not set, Redis caching disabled")
-        redis_client = None
+    #         # Test the connection - THIS IS NOW INSIDE AN ASYNC FUNCTION
+    #         await test_client.ping()
+    #         redis_client = test_client
+    #         print(f"✅ Redis connected successfully to {REDIS_URL}")
+    #     except Exception as e:
+    #         print(f"⚠️ Redis connection failed: {e}")
+    #         print("⚠️ Redis caching disabled - wallet will still work")
+    #         redis_client = None
+    # else:
+    #     print("⚠️ REDIS_URL not set, Redis caching disabled")
+    #     redis_client = None
 
     # 3. Initialize async Postgres checkpointer
     await init_checkpointer()
@@ -127,9 +124,9 @@ async def lifespan(app: FastAPI):
     print("🛑 Application shutting down...")
     
     # Close Redis connection if it exists
-    if redis_client:
-        await redis_client.close()
-        print("🔒 Redis connection closed")
+    # if redis_client:
+    #     await redis_client.close()
+    #     print("🔒 Redis connection closed")
     
     await close_checkpointer()
     cleanup()
@@ -154,6 +151,6 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "vector_store": get_vector_store().index.ntotal > 1,
-        "redis_connected": redis_client is not None
+        "vector_store": get_vector_store().index.ntotal > 1
+        # "redis_connected": redis_client is not None
     }

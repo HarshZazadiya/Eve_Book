@@ -1,14 +1,14 @@
-from typing import Optional
-from langchain_core.tools import tool
 import os
 import json
 import shutil
-from datetime import datetime
 import redis  
-from sqlalchemy.orm import Session
+from typing import Optional
+from datetime import datetime
 from database import SessionLocal
-from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
+from sqlalchemy.orm import Session
+from langchain_core.tools import tool
 from AI.RAG import add_document_to_store, delete_event_documents
+from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
 
 # --------------------------------------------------
 # Configuration

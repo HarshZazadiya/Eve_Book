@@ -1,13 +1,13 @@
-from fastmcp import FastMCP
-from pathlib import Path
-import base64
 import os
-from datetime import datetime
-from pypdf import PdfReader
 import io
+import base64
+from pathlib import Path
+from pypdf import PdfReader
+from fastmcp import FastMCP
+from datetime import datetime
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
 mcp = FastMCP("filesystem")
 

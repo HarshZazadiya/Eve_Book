@@ -1,26 +1,25 @@
-from typing import TypedDict, Annotated, List, Dict, Any, Literal
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph.types import interrupt, Command
+import os
 import json
+from database import SessionLocal
+from AI.utils.state import AgentState
+from langchain_core.tools import tool
+from typing import  Dict, Any, Literal
+from langgraph.prebuilt import ToolNode
+from AI.mcp_manager import get_mcp_tools
 from AI.RAG import llm, search_documents
-from AI.tools.admin_tools import admin_tools
 from AI.tools.host_tools import host_tools
 from AI.tools.user_tools import user_tools
+from AI.utils.memories import search_memory
+from AI.tools.admin_tools import admin_tools
+from langgraph.graph import StateGraph, END
+from langgraph.types import interrupt, Command
+from langgraph.graph.message import add_messages
 from AI.tools.default_tools import default_tools
+from AI.subgraphs.extractor_graph import get_extractor_graph
+from AI.subgraphs.summarizer_graph import get_summarizer_graph
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-import os
-from AI.mcp_manager import get_mcp_tools
-from langgraph.prebuilt import ToolNode
-
-# ============================================================
-# AGENT STATE
-# ============================================================
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
-    user_info: Dict[str, Any]
+from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 # ============================================================
 # RAG TOOL
@@ -54,9 +53,25 @@ async def get_tools_for_role(role: str):
     return tools
 
 # ============================================================
+# REMEMBERENCE NODE
+# ============================================================
+async def memory_retriver_node(state : AgentState) -> AgentState:
+    """
+    This node will take a look into database mainly the Memories table, to look for any data related to query
+    to make the answer more peronalized.
+    """
+    user_info = state["user_info"]
+    last_message = state["messages"][-1].content
+    db = SessionLocal()
+
+    memory = search_memory(user_id = user_info["id"], user_role = user_info["role"], query = last_message)
+    state["memory"] = memory
+    return state
+
+# ============================================================
 # AGENT NODE
 # ============================================================
-async def agent_node(state: AgentState):
+async def agent_node(state : AgentState):
     """
     LLM decides what to do.
     If a sensitive tool is requested, interrupt() pauses the graph
@@ -66,6 +81,7 @@ async def agent_node(state: AgentState):
     """
     messages  = state["messages"]
     user_info = state["user_info"]
+    summary   = state["summary"]
 
     tools     = await get_tools_for_role(user_info["role"])
     all_tools = tools + [search_event_documents]
@@ -91,9 +107,29 @@ async def agent_node(state: AgentState):
                         - Output in pretty format
                         - Be honest and accurate
                         """
-    system_message = SystemMessage(content=system_prompt)
+    
+    context = []
+    if summary:
+        context.append(SystemMessage(content = f"""
+                    Conversation Summary:
+                    {summary}
+
+                    Use this to maintain context. Do not repeat it explicitly.
+                """))
+        
+    memory = state.get("memory", [])
+    if memory:
+        context.append(SystemMessage(content=f"""
+                    User Memory:
+                    {memory}
+
+                    Use this to personalize the response.
+                    Use the info in response, to answer the query.
+                    Do not explicitly mention memory.
+                """))
+    system_message = SystemMessage(content = system_prompt)
     llm_with_tools = llm.bind_tools(all_tools)
-    response = await llm_with_tools.ainvoke([system_message] + messages)
+    response = await llm_with_tools.ainvoke([system_message] + context + messages)
 
     # ── HITL: pause if any called tool is sensitive ──────────
     if response.tool_calls:
@@ -148,6 +184,14 @@ async def tool_node(state: AgentState):
 
     tools = await get_tools_for_role(user_info["role"])
     all_tools = tools + [search_event_documents]
+    
+    # Get list of tool names that accept authentication parameters
+    auth_tools = []
+    for tool in all_tools:
+        # Check if tool has these parameters in its args schema
+        tool_args = str(tool.args)
+        if "authenticated_user_id" in tool_args or "authenticated_user_type" in tool_args:
+            auth_tools.append(tool.name)
 
     # Cache ToolNode per role
     role = user_info["role"]
@@ -161,9 +205,12 @@ async def tool_node(state: AgentState):
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         for tc in last_message.tool_calls:
             new_args = dict(tc.get("args", {}))
-            new_args["authenticated_user_id"] = user_info["id"]
-            new_args["authenticated_user_type"] = user_info["role"]
-            # new_args["authenticated_host_id"] = user_info["id"]
+            
+            # Only add auth params if this tool accepts them
+            if tc["name"] in auth_tools:
+                new_args["authenticated_user_id"] = user_info["id"]
+                new_args["authenticated_user_type"] = user_info["role"]
+            
             tc["args"] = new_args
 
     try:
@@ -173,27 +220,64 @@ async def tool_node(state: AgentState):
         return {
             "messages": [
                 ToolMessage(
-                    content=json.dumps({"error": str(e)}),
-                    tool_call_id="error"
+                    content = json.dumps({"error" : str(e)}),
+                    tool_call_id = "error"
                 )
             ]
         }
     
 # ============================================================
-# ROUTING
+# ROUTING NODE 
 # ============================================================
-def should_continue(state: AgentState) -> Literal["tools", "end"]:
+async def should_continue(state: AgentState) -> Literal["tools", "end"]:
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         print(f"  🔄 AI wants to call: {[tc['name'] for tc in last_message.tool_calls]}")
         return "tools"
     print(f"  ✅ AI ready to respond")
-    return "end"
+    return "checker"
+
+# ============================================================
+# CHECKER NODE
+# ============================================================
+MAX_TOKENS = 3500
+async def checker_node(state: AgentState) -> AgentState:
+    messages = state["messages"]
+    total_tokens = count_tokens_approximately(messages=messages)
+    print(f"current tokens: {total_tokens} (max: {MAX_TOKENS})")
+    
+    if total_tokens > MAX_TOKENS and len(messages) > 10:
+        print("Initializing summarizer Graph...")
+        graph = await get_summarizer_graph()
+        new_state = await graph.ainvoke(state)
+        
+        # Verify the new state
+        new_messages = new_state.get("messages", [])
+        new_tokens = count_tokens_approximately(messages=new_messages)
+        print(f"✅ After summarization: {len(new_messages)} messages, {new_tokens} tokens")
+        
+        # Ensure we preserve other state fields
+        if "user_info" not in new_state:
+            new_state["user_info"] = state.get("user_info")
+        if "memory" not in new_state:
+            new_state["memory"] = state.get("memory", [])
+            
+        return new_state
+    
+    return state
+
+# ============================================================
+# EXTRACTOR NODE
+# ============================================================
+async def extractor_node(state: AgentState) -> AgentState:
+    """this node will check if there is anything worthy of being extracted and put into long term memory for later use from current chat messages"""
+    graph = await get_extractor_graph()
+    return await graph.ainvoke(state)
 
 # ============================================================
 # CHECKPOINTER
 # ============================================================
-DATABASE_URL     = os.getenv("DATABASE_URL")
+DATABASE_URL    = os.getenv("DATABASE_URL")
 checkpointer    = None
 checkpointer_cm = None
 
@@ -224,13 +308,19 @@ agent_graph = None
 def build_workflow():
     workflow = StateGraph(AgentState)
 
+    workflow.add_node("memory_retriver_node", memory_retriver_node)
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tool_node)
+    workflow.add_node("extractor", extractor_node)
+    workflow.add_node("checker", checker_node)
 
+    workflow.add_edge("memory_retriver_node", "agent")
+    workflow.add_conditional_edges("agent", should_continue, {"tools" : "tools", "checker" : "checker"})
     workflow.add_edge("tools", "agent")
-    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+    workflow.add_edge("checker", "extractor")
+    workflow.add_edge("extractor", END)
 
-    workflow.set_entry_point("agent")
+    workflow.set_entry_point("memory_retriver_node")
 
     return workflow
 
@@ -279,8 +369,10 @@ async def run_agent(user_input : str, thread_id : int, user_info : Dict[str, Any
     print(f"📊 Prior message count in thread: {prior_count}")
 
     initial_state = {
-        "messages" :  [HumanMessage(content=user_input)],
-        "user_info" : user_info,
+        "messages" : [HumanMessage(content=user_input)],
+        "user_info":  user_info,
+        "summary" : "",  # Initialize empty summary
+        "memory" : []    # Initialize empty memory list
     }
 
     final_state = await graph.ainvoke(initial_state, config=config)

@@ -1,9 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
-from typing import Annotated
-from sqlalchemy.orm import Session
-from database import SessionLocal
-from routers.auth import get_current_user
 from model import Users
+from typing import Annotated
 from AI.tools.user_tools import (
     get_user_profile,
     get_all_available_events,
@@ -13,8 +9,15 @@ from AI.tools.user_tools import (
     cancel_user_booking,
     user_tools
 )
+from database import SessionLocal
+from sqlalchemy.orm import Session
+from routers.auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException
 
-router = APIRouter(prefix="/user", tags=["User"])
+router = APIRouter(
+        prefix = "/user", 
+        tags = ["User"]
+    )
 
 # --------------------------------------------------
 # Dependencies

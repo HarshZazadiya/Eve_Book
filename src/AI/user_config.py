@@ -1,5 +1,5 @@
-from sqlalchemy.orm import Session
 from model import UserSettings
+from sqlalchemy.orm import Session
 
 DEFAULT_SENSITIVE_TOOLS = [
     "delete_file",

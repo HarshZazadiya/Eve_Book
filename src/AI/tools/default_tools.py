@@ -1,8 +1,9 @@
-from langchain_core.tools import tool
-from database import SessionLocal
-from model import Users, Hosts, Wallets
 import os
 import redis
+from database import SessionLocal
+from langchain_core.tools import tool
+from model import Users, Hosts, Wallets
+
 
 REDIS_URL = os.getenv("REDIS_URL")
 redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True) if REDIS_URL else None

@@ -1,12 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.security import OAuth2PasswordRequestForm
-from typing import Annotated
-from sqlalchemy.orm import Session
-from database import SessionLocal
-from routers.auth import authenticate_host, create_access_token, get_current_host
-from model import Hosts
 import os
 import shutil
+from model import Hosts
+from typing import Annotated
 from pydantic import BaseModel
 from AI.tools.host_tools import (
     get_host_info,
@@ -17,6 +12,11 @@ from AI.tools.host_tools import (
     update_event_document,
     host_tools
 )
+from database import SessionLocal
+from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from routers.auth import authenticate_host, create_access_token, get_current_host
 
 router = APIRouter(prefix="/host", tags=["Host"])
 

@@ -1,14 +1,14 @@
 import os
-from sqlalchemy.orm import Session
 from typing import Annotated
+from pydantic import BaseModel
+from jose import jwt, JWTError
+from database import SessionLocal
+from sqlalchemy.orm import Session
+from model import Users, Hosts, Wallets
+from passlib.context import CryptContext
 from datetime import timedelta, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from pydantic import BaseModel
-from jose import jwt, JWTError
-from passlib.context import CryptContext
-from database import SessionLocal
-from model import Users, Hosts
 
 router = APIRouter(
     prefix = "/auth",
@@ -147,6 +147,14 @@ async def create_user(request: CreateUserRequest,db: db_dependency):
     db.add(user)
     db.commit()
     db.refresh(user)
+    wallet = Wallets(
+        owner_id = user.id,
+        owner_type = user.role,
+        balance = 0 
+    )
+    db.add(wallet)
+    db.commit()
+    db.refresh(wallet)
 
     return {"id": user.id, "username": user.username}
 
@@ -159,10 +167,19 @@ async def create_host(request: CreateHostRequest,db: db_dependency):
         email = request.email,
         hashed_password = bcrypt_context.hash(request.password),
     )
-    
     db.add(host)
     db.commit()
     db.refresh(host)
+
+    wallet = Wallets(
+        owner_id = host.id,
+        owner_type = "host",
+        balance = 0 
+    )
+    db.add(wallet)
+    db.commit() 
+    db.refresh(wallet)
+
     return {"id": host.id, "company_name": host.company_name}
 
 @router.get("/me")

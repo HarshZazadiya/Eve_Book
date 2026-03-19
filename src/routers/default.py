@@ -1,17 +1,13 @@
-import json
-
-from fastapi import APIRouter, Depends, HTTPException
-from typing import Annotated, List
-from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
-from AI.graph import run_agent
-from database import SessionLocal
-from model import Wallets
 import os
-from routers.host import PaymentRequest
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from model import Wallets
+from typing import Annotated
+from jose import jwt, JWTError
 from redis.asyncio import Redis
+from database import SessionLocal
+from sqlalchemy.orm import Session
+from routers.host import PaymentRequest
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, Depends, HTTPException
 
 router = APIRouter(
         prefix = "/default", 

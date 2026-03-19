@@ -1,8 +1,10 @@
 import logging
-logging.getLogger("streamlit").setLevel(logging.ERROR)
-from datetime import datetime
-import streamlit as st
 import requests
+import streamlit as st
+from datetime import datetime
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+
 
 BASE_URL = "http://localhost:8000"
 
@@ -703,7 +705,7 @@ def wallet_ui():
     </div>
     """, unsafe_allow_html=True)
     
-    r = requests.get(f"{BASE_URL}/wallets/myWallet", headers=headers())
+    r = requests.get(f"{BASE_URL}/default/myWallet", headers=headers())
     
     if r.status_code == 200:
         data = r.json()
@@ -739,7 +741,7 @@ def wallet_ui():
         if st.button("➕ Add Money", use_container_width=True, type="primary"):
             with st.spinner("Processing..."):
                 response = requests.post(
-                    f"{BASE_URL}/wallets/topUp",
+                    f"{BASE_URL}/default/topUp",
                     headers=headers(),
                     json={"amount": amount}
                 )
@@ -1615,12 +1617,22 @@ def admin_dashboard():
             user_wallets = len([w for w in wallets if w.get('owner_type') == 'user'])
             host_wallets = len([w for w in wallets if w.get('owner_type') == 'host'])
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Balance", f"₹{total_balance:,.2f}")
+                balance = 0  # Initialize with default value
+                try:
+                    r = requests.get(f"{BASE_URL}/default/myWallet", headers=headers())
+                    if r.status_code == 200:  # Only parse on success
+                        data = r.json()
+                        balance = data.get("balance") or data.get("wallet_balance") or 0
+                except:
+                    pass  # Keep default 0 on error
+                st.metric("Total Revenue", f"₹{balance}")
             with col2:
-                st.metric("User Wallets", user_wallets)
+                st.metric("Total Balance", f"₹{total_balance:,.2f}")
             with col3:
+                st.metric("User Wallets", user_wallets)
+            with col4:
                 st.metric("Host Wallets", host_wallets)
             
             st.divider()
