@@ -272,7 +272,7 @@ The agent graph runs per-request and persists state to PostgreSQL via `AsyncPost
 - `checker_node` — counts approximate tokens in the message list; if over 3,500 tokens and more than 10 messages, delegates to the summarizer subgraph
 - `extractor_node` — delegates to the extractor subgraph to persist new memories
 
-### ❌ HITL Flow
+## ❌ HITL Flow
 
 1. User sends a message
 2. Agent decides to call a tool that is in the user's sensitive tool list
@@ -282,7 +282,7 @@ The agent graph runs per-request and persists state to PostgreSQL via `AsyncPost
 6. Frontend POSTs back to `/chat/ask` with `human_approval: "yes"` or `"no"` and the original message
 7. Backend calls `graph.ainvoke(Command(resume=...))` to resume the graph from the exact interrupt point
 
-### 🔗 RAG Pipeline
+## 🔗 RAG Pipeline
 
 On startup, `build_fresh_vector_store()` scans `uploads/` for all PDFs, loads and chunks them (`chunk_size=300, overlap=30`), tags each chunk with `event_id` extracted from the filename convention `{host_id}_{event_id}_{title}.pdf`, and builds a FAISS index. The index is deleted on shutdown.
 
@@ -290,11 +290,11 @@ When a host creates or updates an event, the new PDF is immediately added to the
 
 The agent has access to `search_event_documents(query)` which performs a similarity search and returns the top 3 chunks with event ID and source file metadata.
 
-### 🧠 Memory System
+## 🧠 Memory System
 
 After each completed turn, the extractor subgraph sends the last 10 messages to `llama-3.3-70b-versatile` with a structured output schema (`ExtractedMemory`). Extracted memories are typed as `preference`, `personal/fact`, `goal`, or `habit` and stored with a 384-dim embedding (MiniLM). On each subsequent turn, `search_memory()` retrieves the top 2 semantically similar memories via pgvector cosine distance and injects them silently into the agent's context.
 
-### ⚡Available Tools by Role
+## ⚡Available Tools by Role
 
 **All roles (default_tools):**
 - `get_wallet_balance` — check wallet balance
