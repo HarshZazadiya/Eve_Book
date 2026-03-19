@@ -284,15 +284,17 @@ The agent graph runs per-request and persists state to PostgreSQL via `AsyncPost
 
 ## 🔗 RAG Pipeline
 
-On startup, `build_fresh_vector_store()` scans `uploads/` for all PDFs, loads and chunks them (`chunk_size=300, overlap=30`), tags each chunk with `event_id` extracted from the filename convention `{host_id}_{event_id}_{title}.pdf`, and builds a FAISS index. The index is deleted on shutdown.
+- On startup, `build_fresh_vector_store()` scans `uploads/` for all PDFs, loads and chunks them (`chunk_size=300, overlap=30`), tags each chunk with `event_id` extracted from the filename convention `{host_id}_{event_id}_{title}.pdf`, and builds a FAISS index. The index is deleted on shutdown.
 
-When a host creates or updates an event, the new PDF is immediately added to the live FAISS index via `add_document_to_store()`. When an event is deleted, `delete_event_documents()` rebuilds the index without that event's chunks.
+- When a host creates or updates an event, the new PDF is immediately added to the live FAISS index via `add_document_to_store()`. When an event is deleted, `delete_event_documents()` rebuilds the index without that event's chunks.
 
-The agent has access to `search_event_documents(query)` which performs a similarity search and returns the top 3 chunks with event ID and source file metadata.
+- The agent has access to `search_event_documents(query)` which performs a similarity search and returns the top 3 chunks with event ID and source file metadata.
 
 ## 🧠 Memory System
 
-After each completed turn, the extractor subgraph sends the last 10 messages to `llama-3.3-70b-versatile` with a structured output schema (`ExtractedMemory`). Extracted memories are typed as `preference`, `personal/fact`, `goal`, or `habit` and stored with a 384-dim embedding (MiniLM). On each subsequent turn, `search_memory()` retrieves the top 2 semantically similar memories via pgvector cosine distance and injects them silently into the agent's context.
+- After each completed turn, the extractor subgraph sends the last 10 messages to `llama-3.3-70b-versatile` with a structured output schema (`ExtractedMemory`).
+
+- Extracted memories are typed as `preference`, `personal/fact`, `goal`, or `habit` and stored with a 384-dim embedding (MiniLM). On each subsequent turn, `search_memory()` retrieves the top 2 semantically similar memories via pgvector cosine distance and injects them silently into the agent's context.
 
 ## ⚡Available Tools by Role
 
