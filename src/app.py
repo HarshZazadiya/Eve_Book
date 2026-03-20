@@ -1,3 +1,4 @@
+import os
 import logging
 import requests
 import streamlit as st
@@ -6,8 +7,8 @@ from datetime import datetime
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
-BASE_URL = "http://localhost:8000"
-
+# BASE_URL = "http://localhost:8000"
+BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 st.set_page_config(
     page_title="EveBook · AI Event Platform", 
     page_icon="🎟️", 

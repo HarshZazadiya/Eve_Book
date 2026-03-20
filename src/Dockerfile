@@ -1,46 +1,31 @@
-# FROM python:3.11-slim
-
-# RUN apt-get update && apt-get install -y \
-#     curl \
-#     netcat-openbsd \
-#     dos2unix \
-#     && rm -rf /var/lib/apt/lists/*
-
-# WORKDIR /app
-
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# COPY . .
-
-# RUN dos2unix /app/start.sh /app/wait_ollama.sh && \
-#     chmod +x /app/start.sh /app/wait_ollama.sh
-
-# RUN mkdir -p /app/uploads /app/vector_store
-
-# EXPOSE 8000 8501
-
-# CMD ["/app/start.sh"]
-
 FROM python:3.11-slim
-
-RUN apt-get update && apt-get install -y \
-    curl \
-    netcat-openbsd \
-    dos2unix \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    postgresql-client \
+    netcat-openbsd \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY . .
 
-RUN dos2unix /app/start.sh && chmod +x /app/start.sh
+# Create necessary directories
+RUN mkdir -p /app/uploads /app/vector_store /app/src/AI/local_mcp/file_handle/workspace
 
-RUN mkdir -p /app/uploads /app/vector_store
+COPY start.sh /app/start.sh
+# Make scripts executable
+RUN chmod +x /app/start.sh
 
-EXPOSE 8000 8501
+# Expose ports
+EXPOSE 8000 8501 8001
 
 CMD ["/app/start.sh"]

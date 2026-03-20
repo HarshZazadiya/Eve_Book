@@ -14,6 +14,10 @@ while ! nc -z postgres 5432; do
 done
 echo "✅ PostgreSQL is ready"
 
+echo "🔧 Enabling pgvector extension..."
+PGPASSWORD=postgres psql -h postgres -U postgres -d EventBooking -c "CREATE EXTENSION IF NOT EXISTS vector;"
+echo "✅ pgvector extension enabled"
+
 # Wait for Redis
 echo "📦 Waiting for Redis..."
 while ! nc -z redis 6379; do
@@ -32,13 +36,31 @@ Base.metadata.create_all(bind=engine)
 print('✅ Database tables created')
 "
 
-# Start MCP file handling server in background
+# Start MCP file handling server in background with retry
 echo "🔌 Starting MCP file handling server..."
-cd /app/src/AI/local_mcp/file_handle
-python file_handling_server.py &
-MCP_PID=$!
-echo "✅ MCP server started (PID: $MCP_PID)"
+cd /app/AI/local_mcp/file_handle
 
+# Check if file_handling_server.py exists
+if [ -f "file_handling_server.py" ]; then
+    # Install any missing MCP dependencies if needed
+    pip install fastmcp mcp 2>/dev/null || true
+    
+    # Start the server
+    python file_handling_server.py &
+    MCP_PID=$!
+    echo "✅ MCP server started (PID: $MCP_PID)"
+    
+    # Wait for MCP server to be ready
+    sleep 3
+    if curl -s http://localhost:8001/health > /dev/null 2>&1; then
+        echo "✅ MCP server is ready"
+    else
+        echo "⚠️ MCP server may not be ready yet (continuing anyway)"
+    fi
+else
+    echo "⚠️ MCP server file not found, skipping"
+    MCP_PID=""
+fi
 # Give MCP server a moment to start
 sleep 2
 

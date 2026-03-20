@@ -11,7 +11,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
 mcp = FastMCP("filesystem")
 
-WORKSPACE = Path("D:/internship_project/eve_book/src/ai/local_mcp/file_handle/workspace")
+WORKSPACE = Path(__file__).parent / "workspace"
 WORKSPACE.mkdir(exist_ok=True)
 
 def is_base64_encoded(content: str) -> bool:
