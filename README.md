@@ -4,22 +4,6 @@ EveBook is a full-stack event booking platform with an integrated AI assistant. 
 
 ---
 
-## Table of Contents
-
-- [Architecture Overview](#architecture-overview)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Database Models](#database-models)
-- [API Endpoints](#api-endpoints)
-- [AI System](#ai-system)
-- [MCP File Server](#mcp-file-server)
-- [Environment Variables](#environment-variables)
-- [Setup & Running](#setup--running)
-- [Role System](#role-system)
-
----
-
 ## 🚀 Architecture Overview
 
 ```
