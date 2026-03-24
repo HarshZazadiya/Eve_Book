@@ -1,6 +1,7 @@
 import os
 from database import SessionLocal
 from langchain_core.tools import tool
+from AI.tools.workflows.workflow import workflow_request_sync
 from model import BookingPayments, Users, Events, Bookings, Wallets, Hosts, HostPromotions
 
 @tool
@@ -142,6 +143,7 @@ def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
         if event.available_seats < 1:
             return {"error": "No seats available"}
         
+        user = db.query(Users).filter(Users.id == authenticated_user_id).first()
         # Check if already booked
         existing = db.query(Bookings).filter(
             Bookings.user_id == authenticated_user_id,
@@ -172,18 +174,42 @@ def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
         db.add(booking)
         db.commit()
         db.refresh(booking)
-
+        host_wallet = db.query(Wallets).filter(
+            Wallets.owner_type == "host",
+            Wallets.owner_id == event.host_id
+        ).first()
+        host_wallet.balance += event.ticket_price
+        
+        # Add payment
         booking_payment = BookingPayments(
             booking_id = booking.id,
             user_id = authenticated_user_id,
             amount = event.ticket_price,
             status = "successful",
-
         )
         db.add(booking_payment)
         db.commit()
         db.refresh(booking_payment)
         
+        # send all data to webhook
+        temp = "attendees"
+        webhook_data = {
+            "user_id": authenticated_user_id,
+            "user_name": user.username,
+            "user_email": user.email,
+            "event_id": event_id,
+            "event_title": event.title,
+            "event_venue": event.venue,
+            "event_date": str(event.date),
+            "ticket_count": 1,
+            "ticket_price": event.ticket_price,
+            "total_amount": event.ticket_price,
+            "booking_id": booking.id,
+            "sheet_id" : event.sheet_id,
+            "sheet_name" : f"Freser_Party_{temp}"
+        }
+    
+        workflow_request_sync(webhook_data, "http://localhost:5678/webhook/event", "POST")
         return {
             "message": f"Successfully booked {event.title}",
             "booking_id": booking.id,
@@ -277,7 +303,8 @@ def promote_user_to_host(authenticated_user_id: int) -> dict:
         if not user:
             return {"error": "User not found"}
         
-        if user.role == "host":
+        existing_host = db.query(Hosts).filter(Hosts.user_id == authenticated_user_id).first()
+        if existing_host:
             return {"error": "You are already a host"}
         
         # Check wallet
@@ -291,17 +318,15 @@ def promote_user_to_host(authenticated_user_id: int) -> dict:
         
         # Process promotion
         wallet.balance -= PROMOTION_FEE
-        user.role = "host"
         admin_wallet  = db.query(Wallets).filter(Wallets.owner_type == "admin").first()
         if admin_wallet:
             admin_wallet.balance += PROMOTION_FEE
+
         # Create host record
         new_host = Hosts(
-            company_name=user.username,
-            email=user.email,
-            hashed_password=user.hashed_password,
-            is_fee_paid=True,
-            user_id=user.id
+            company_name = user.username,
+            email = user.email,
+            hashed_password = user.hashed_password
         )
         db.add(new_host)
         db.flush()
@@ -312,13 +337,22 @@ def promote_user_to_host(authenticated_user_id: int) -> dict:
         
         # Record promotion
         promotion = HostPromotions(
-            user_id=user.id,
-            amount=PROMOTION_FEE,
-            status="success"
+            user_id = user.id,
+            amount = PROMOTION_FEE,
+            status = "success"
         )
         db.add(promotion)
-        
+        db.delete(user)
         db.commit()
+        data = {
+            "id" : new_host.id,
+            "username" : user.username,
+            "email" : new_host.email,
+            "company_name" : new_host.company_name,
+            "fees_paid" : 10000
+        }
+        
+        workflow_request_sync(data, "http://localhost:5678/webhook/promote", "POST")
         
         return {"message": "Successfully promoted to host!"}
     except Exception as e:

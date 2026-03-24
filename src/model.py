@@ -20,11 +20,8 @@ class Hosts(Base):
     id = Column(Integer, primary_key = True, index = True)
     company_name = Column(String(100), nullable = False)
     email = Column(String(200), unique=True, nullable = False)
-    is_fee_paid = Column(Boolean, default = False)
     hashed_password = Column(String(200), nullable = False)
-    user_id = Column(Integer, ForeignKey("users.id"), unique = True)
     
-
 class HostPromotions(Base):
     __tablename__ = "host_promotions"
 
@@ -47,7 +44,7 @@ class Events(Base):
     available_seats = Column(Integer, nullable = False)
     ticket_price = Column(Integer, nullable = False, default = 100)
     document_path = Column(String, nullable = True)
-    document_processed = Column(Boolean, default = False)
+    sheet_id = Column(String, nullable = True)
 
 class BookingPayments(Base):
     __tablename__ = "booking_payments"

@@ -77,70 +77,6 @@
 #   ollama_data:
 
 # =============================================================================================================================
-services:
-  postgres:
-    image: ankane/pgvector:latest
-    container_name: event_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: EventBooking
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: event_redis
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  app:
-    build: .
-    container_name: event_booking_app
-    ports:
-      - "8000:8000"
-      - "8501:8501"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
-      REDIS_URL: redis://redis:6379
-      API_BASE_URL: http://app:8000
-      SECRET_KEY: ${SECRET_KEY}
-      ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY}
-      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME}
-      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
-      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
-      GROQ_API_KEY: ${GROQ_API_KEY}
-    env_file:
-      - .env
-    volumes:
-      - ./uploads:/app/uploads
-      - ./vector_store:/app/vector_store
-    working_dir: /app
-    stdin_open: true
-    tty: true
-
-volumes:
-  postgres_data:
-
-
 # services:
 #   postgres:
 #     image: ankane/pgvector:latest
@@ -154,6 +90,99 @@ volumes:
 #       - "5433:5432"
 #     volumes:
 #       - postgres_data:/var/lib/postgresql/data
+#     healthcheck:
+#       test: ["CMD-SHELL", "pg_isready -U postgres"]
+#       interval: 5s
+#       timeout: 5s
+#       retries: 5
+
+#   redis:
+#     image: redis:7-alpine
+#     container_name: event_redis
+#     ports:
+#       - "6379:6379"
+#     healthcheck:
+#       test: ["CMD", "redis-cli", "ping"]
+#       interval: 5s
+#       timeout: 5s
+#       retries: 5
+
+#   app:
+#     build: .
+#     container_name: event_booking_app
+#     ports:
+#       - "8000:8000"
+#       - "8501:8501"
+#     depends_on:
+#       postgres:
+#         condition: service_healthy
+#       redis:
+#         condition: service_healthy
+#     environment:
+#       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
+#       REDIS_URL: redis://redis:6379
+#       API_BASE_URL: http://app:8000
+#       SECRET_KEY: ${SECRET_KEY}
+#       ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY}
+#       DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME}
+#       DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
+#       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+#       GROQ_API_KEY: ${GROQ_API_KEY}
+#     env_file:
+#       - .env
+#     volumes:
+#       - ./uploads:/app/uploads
+#       - ./vector_store:/app/vector_store
+#     working_dir: /app
+#     stdin_open: true
+#     tty: true
 
 # volumes:
 #   postgres_data:
+
+
+services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: event_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: EventBooking
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
+    name: n8n_data
+  postgres_data:
+
+
+#  docker run -it --rm `
+#    --name n8n `
+#    -p 5678:5678 `
+#    -e GENERIC_TIMEZONE="Asia/Kolkata" `
+#    -e TZ="Asia/Kolkata" `
+#    -e N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true `
+#    -e N8N_RUNNERS_ENABLED=true `
+#    -v n8n_data:/home/node/.n8n `
+#    docker.n8n.io/n8nio/n8n

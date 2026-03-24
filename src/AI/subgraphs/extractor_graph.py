@@ -13,10 +13,10 @@ from AI.RAG import embeddings
 # ============================================================
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0,
-    max_tokens=2048,
-    groq_api_key=os.getenv("GROQ_API_KEY")
+    model = "llama-3.3-70b-versatile",
+    temperature = 0,
+    max_tokens = 2048,
+    groq_api_key = os.getenv("GROQ_API_KEY")
 )
 
 # ============================================================
@@ -55,9 +55,9 @@ Conversation:
 # ============================================================
 
 class MemoryItem(BaseModel):
-    type: Literal["preference", "personal/fact", "goal", "habit"]
-    key: str
-    value: str
+    type : Literal["preference", "personal/fact", "goal", "habit"]
+    key : str
+    value : str
 
 
 class ExtractedMemory(BaseModel):
@@ -76,10 +76,7 @@ async def memory_saver(user_info, memories: List[MemoryItem]):
     try:
         for memory in memories:
             # Check if memory already exists
-            existing = db.query(Memories).filter_by(
-                user_id=user_info["id"], 
-                key=memory.key
-            ).first()
+            existing = db.query(Memories).filter_by(user_id = user_info["id"], key = memory.key).first()
 
             # Generate embedding for the memory value
             memory_embedding = embeddings.embed_query(memory.value)
@@ -93,12 +90,12 @@ async def memory_saver(user_info, memories: List[MemoryItem]):
             else:
                 # insert new memory with embedding
                 db.add(Memories(
-                    user_id=user_info["id"],
-                    user_role=user_info["role"],
-                    type=memory.type,
-                    key=memory.key,
-                    value=memory.value,
-                    embedding=memory_embedding  # Add the embedding here
+                    user_id = user_info["id"],
+                    user_role = user_info["role"],
+                    type = memory.type,
+                    key = memory.key,
+                    value = memory.value,
+                    embedding = memory_embedding  # Add the embedding here
                 ))
                 print(f"✅ Added memory: {memory.key} = {memory.value}")
 
@@ -124,9 +121,9 @@ async def extractor_node(state: AgentState) -> AgentState:
         conversation_lines = []
         for msg in messages[-10:]:  # Last 10 messages max
             if isinstance(msg, HumanMessage):
-                conversation_lines.append(f"User: {msg.content}")
+                conversation_lines.append(f"User : {msg.content}")
             elif isinstance(msg, AIMessage):
-                conversation_lines.append(f"Assistant: {msg.content}")
+                conversation_lines.append(f"Assistant : {msg.content}")
         
         conversation = "\n".join(conversation_lines)
         

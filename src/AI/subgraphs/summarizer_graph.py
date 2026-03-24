@@ -42,9 +42,9 @@ async def summarizer_node(state: AgentState):
         formatted_messages = []
         for msg in to_summarize:
             if isinstance(msg, HumanMessage):
-                formatted_messages.append(f"User: {msg.content}")
+                formatted_messages.append(f"User : {msg.content}")
             elif isinstance(msg, AIMessage):
-                formatted_messages.append(f"Assistant: {msg.content}")
+                formatted_messages.append(f"Assistant : {msg.content}")
         
         messages_text = "\n".join(formatted_messages)
         

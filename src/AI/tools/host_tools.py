@@ -1,14 +1,17 @@
 import os
 import json
-import shutil
 import redis  
+import shutil
+import asyncio
 from typing import Optional
 from datetime import datetime
 from database import SessionLocal
 from sqlalchemy.orm import Session
 from langchain_core.tools import tool
 from AI.RAG import add_document_to_store, delete_event_documents
-from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Wallets
+from AI.tools.workflows.workflow import workflow_request_sync
+from model import Events, Hosts, HostingPayments, BookingPayments, Bookings, Users, Wallets
+
 
 # --------------------------------------------------
 # Configuration
@@ -180,25 +183,24 @@ def create_host_event(
             
         # Record payment
         payment = HostingPayments(
-            host_id=host_id,
-            amount=HOSTING_FEE,
-            status="success"
+            host_id = host_id,
+            amount = HOSTING_FEE,
+            status = "success"
         )
         db.add(payment)
         
         # Create event
         event = Events(
-            title=title,
-            venue=venue,
-            date=datetime.strptime(date, "%Y-%m-%d").date(),
-            seats=seats,
-            available_seats=seats,
-            host_id=host_id,
-            ticket_price=ticket_price
+            title = title,
+            venue = venue,
+            date = datetime.strptime(date, "%Y-%m-%d").date(),
+            seats = seats,
+            available_seats = seats,
+            host_id = host_id,
+            ticket_price = ticket_price,
+            sheet_id = ""
         )
         db.add(event)
-        db.commit()
-        db.refresh(event)
         
         # Handle document
         safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
@@ -222,7 +224,7 @@ def create_host_event(
         
         # Update event with document path
         event.document_path = filename
-        db.commit()
+        
         
         # Add to vector store
         add_document_to_store(event.id, file_path)
@@ -233,7 +235,21 @@ def create_host_event(
                 redis_client.delete(f"host_events:{host_id}")
             except:
                 pass
-        
+        host = db.query(Hosts).filter(Hosts.id == host_id).first()
+        total_events = db.query(Events).filter(Events.host_id == host_id).count()
+        data = {
+          "event_id" : total_events,
+          "event_name" : title,
+          "event_date" : str(date),
+          "sheet_name" : f"{safe_title}_{'attendees'}",
+          "host_credentials" : host.email
+        }
+
+        result = workflow_request_sync(data, "http://localhost:5678/webhook/new-event", "POST")
+        event.sheet_id = result.get("sheet_id")
+
+        db.add(event)
+        db.commit()
         return {
             "event_id": event.id,
             "message": "Event created successfully"
@@ -393,7 +409,33 @@ def update_host_event(
             # STEP 5: Add to vector store
             add_document_to_store(event_id, file_path)
             print(f"✅ Added updated event {event_id} to vector store")
-        
+
+            # send main to everyone who booked the events
+            bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
+            for booking in bookings:
+                user_id = booking.user_id
+                user = db.query(Users).filter(Users.id == user_id).first()
+                
+                webhook_data = {
+                    "user_id": user.id,
+                    "user_name": user.username,
+                    "user_email": user.email,
+                    "event_id": event.id,
+                    "event_title": event.title,
+                    "event_venue": event.venue,
+                    "event_date": str(event.date),
+                    "ticket_price": event.ticket_price,
+                    "ticket_count": booking.ticket_count,
+                    "total_amount": booking.ticket_count * event.ticket_price, 
+                    "booking_id": booking.id,
+                    "available_seats": event.available_seats,
+                    "doc_path": event.document_path
+                }
+                workflow_request_sync(
+                    webhook_data,
+                    "http://localhost:5678/webhook/event",
+                    "PUT"
+                )
         # Clear Redis cache
         if redis_client:
             try:

@@ -8,7 +8,7 @@ from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments, Host
 # HELPER FUNCTION (NOT A TOOL)
 # ==================================================
 
-def refund_booking_logic(db: Session, booking: Bookings):
+def refund_booking(db: Session, booking: Bookings):
     """Helper function to refund a booking - not exposed as tool"""
     wallet = db.query(Wallets).filter(Wallets.owner_type == "user",  Wallets.owner_id == booking.user_id).first()
     
@@ -181,7 +181,7 @@ def delete_event_by_id(event_id: int, admin_id: int) -> dict:
         bookings = db.query(Bookings).filter(Bookings.event_id == event_id).all()
 
         for booking in bookings:
-            refund_booking_logic(db, booking)
+            refund_booking(db, booking)
 
         # Delete document file if exists
         if event.document_path:
@@ -222,7 +222,7 @@ def delete_booking_by_id(booking_id: int, admin_id: int) -> dict:
         if not booking:
             return {"error": "Booking not found"}
 
-        refund_booking_logic(db, booking)
+        refund_booking(db, booking)
         db.commit()
         return {"message": f"Booking {booking_id} deleted & refunded"}
     except Exception as e:
@@ -274,27 +274,21 @@ def demote_host_by_id(host_id: int, admin_id: int) -> dict:
             # Cancel all bookings for this event
             bookings = db.query(Bookings).filter(Bookings.event_id == event.id).all()
             for booking in bookings:
-                refund_booking_logic(db, booking)
+                refund_booking(db, booking)
 
             db.delete(event)
 
-        # Update user role
-        if host.user_id:
-            user = db.query(Users).filter(Users.id == host.user_id).first()
-            if user:
-                user.role = "user"
-
-        # Transfer wallet balance to user wallet
-        if host_wallet and host.user_id:
-            user_wallet = db.query(Wallets).filter(
-                Wallets.owner_type == "user", 
-                Wallets.owner_id == host.user_id
-            ).first()
-
-            if user_wallet:
-                user_wallet.balance += host_wallet.balance
-                db.delete(host_wallet)
-
+        user = Users(
+            email = host.email,
+            username = host.company_name,
+            hashed_password = host.hashed_password,
+            role = "user"
+        )
+        db.add(user)
+        
+        host_wallet.owner_id = user.id
+        host_wallet.owner_type = "user"
+        
         db.delete(host)
         db.commit()
         return {"message": f"Host {host_id} demoted successfully"}

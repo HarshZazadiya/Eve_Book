@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Annotated
 from pydantic import BaseModel
 from jose import jwt, JWTError
@@ -8,6 +9,7 @@ from model import Users, Hosts, Wallets
 from passlib.context import CryptContext
 from datetime import timedelta, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
+from AI.tools.workflows.workflow import workflow_request_sync
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 
 router = APIRouter(
@@ -15,6 +17,7 @@ router = APIRouter(
     tags = ["Auth"],
 )
 
+header_secret = os.getenv("HEADER_SECRET")
 
 class Token(BaseModel):
     access_token : str
@@ -32,7 +35,7 @@ class CreateHostRequest(BaseModel):
     email : str
     password : str
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -134,6 +137,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db: Session = D
             "name" : host.company_name
         }
 
+    
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -156,9 +160,15 @@ async def create_user(request: CreateUserRequest,db: db_dependency):
     db.commit()
     db.refresh(wallet)
 
+    data = {
+        "id" : user.id,
+        "username" : user.username,
+        "email" : user.email,
+        "role" : user.role
+    }
+    
+    workflow_request_sync(data, "http://localhost:5678/webhook/new", "POST")
     return {"id": user.id, "username": user.username}
-
-
 
 @router.post("/host", status_code = 201)
 async def create_host(request: CreateHostRequest,db: db_dependency):
@@ -180,6 +190,13 @@ async def create_host(request: CreateHostRequest,db: db_dependency):
     db.commit() 
     db.refresh(wallet)
 
+    data = {
+        "id" : host.id,
+        "company_name" : host.company_name,
+        "email" : host.email,
+        "role" : "host"
+    }
+    workflow_request_sync(data, "http://localhost:5678/webhook/new", "POST")
     return {"id": host.id, "company_name": host.company_name}
 
 @router.get("/me")

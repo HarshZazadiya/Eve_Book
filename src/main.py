@@ -52,26 +52,6 @@ async def lifespan(app: FastAPI):
     store = get_vector_store()
     print(f"✅ FAISS ready with {store.index.ntotal} vectors")
 
-    # 2. Initialize Redis with connection test (INSIDE lifespan function)
-    # global redis_client
-    # REDIS_URL = os.getenv("REDIS_URL")
-    # if REDIS_URL:
-    #     try:
-    #         # Try to create Redis client with timeout
-    #         test_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
-            
-    #         # Test the connection - THIS IS NOW INSIDE AN ASYNC FUNCTION
-    #         await test_client.ping()
-    #         redis_client = test_client
-    #         print(f"✅ Redis connected successfully to {REDIS_URL}")
-    #     except Exception as e:
-    #         print(f"⚠️ Redis connection failed: {e}")
-    #         print("⚠️ Redis caching disabled - wallet will still work")
-    #         redis_client = None
-    # else:
-    #     print("⚠️ REDIS_URL not set, Redis caching disabled")
-    #     redis_client = None
-
     # 3. Initialize async Postgres checkpointer
     await init_checkpointer()
 
