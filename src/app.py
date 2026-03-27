@@ -6,9 +6,8 @@ from datetime import datetime
 
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
-
-BASE_URL = "http://localhost:8000"
-# BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
+PUBLIC_BASE_URL = os.getenv("API_PUBLIC_BASE_URL", "http://localhost:8000")
 st.set_page_config(
     page_title="EveBook · AI Event Platform", 
     page_icon="🎟️", 
@@ -737,7 +736,7 @@ def wallet_ui():
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        amount = st.number_input("", min_value=1, value=100, step=100, label_visibility="collapsed")
+        amount = st.number_input("Amount", min_value=1, value=100, step=100, label_visibility="collapsed")
         
         if st.button("➕ Add Money", use_container_width=True, type="primary"):
             with st.spinner("Processing..."):
@@ -915,7 +914,7 @@ def user_dashboard():
                             st.error(book_res.text)
                     
                     if e.get("more_details"):
-                        st.link_button("📄 View Details", f"{BASE_URL}{e['more_details']}", use_container_width=True)
+                        st.link_button("📄 View Details", f"{PUBLIC_BASE_URL}{e['more_details']}", use_container_width=True)
     
     if menu == "My Bookings":
         res = requests.get(f"{BASE_URL}/user/myEvents", headers=headers())
@@ -974,7 +973,7 @@ def user_dashboard():
                     )
                     
                     if event and event.get("more_details"):
-                        st.link_button("📄 View Details", f"{BASE_URL}{event['more_details']}", use_container_width=True)
+                        st.link_button("📄 View Details", f"{PUBLIC_BASE_URL}{event['more_details']}", use_container_width=True)
                 
                 if st.button("Cancel Booking", key=f"cancel_{b.get('booking_id')}"):
                     cancel_res = requests.delete(
@@ -1140,7 +1139,7 @@ def host_dashboard():
                 # VIEW DOCUMENT
                 with col2:
                     if e.get("more_details"):
-                        st.link_button("📄 View Document", f"{BASE_URL}{e['more_details']}", use_container_width=True)
+                        st.link_button("📄 View Document", f"{PUBLIC_BASE_URL}{e['more_details']}", use_container_width=True)
                 
                 # EDIT TOGGLE
                 with col3:
@@ -1215,7 +1214,7 @@ def host_dashboard():
                         }
                         
                         doc_res = requests.put(
-                            f"{BASE_URL}/host/event_document/{e.get('id')}",
+                            f"{PUBLIC_BASE_URL}/host/event_document/{e.get('id')}",
                             headers=headers(),
                             files=files
                         )
@@ -1302,7 +1301,7 @@ def admin_dashboard():
                                 None
                             )
                             if event and event.get("more_details"):
-                                st.link_button("📄 More Details", f"{BASE_URL}{event['more_details']}", use_container_width=True)
+                                st.link_button("📄 More Details", f"{PUBLIC_BASE_URL}{event['more_details']}", use_container_width=True)
     
     # ================= HOSTS =================
     elif tab == "Hosts":
@@ -1385,7 +1384,7 @@ def admin_dashboard():
                                 if e.get("more_details"):
                                     st.link_button(
                                         "📄 View Document", 
-                                        f"{BASE_URL}{e['more_details']}",
+                                        f"{PUBLIC_BASE_URL}{e['more_details']}",
                                         use_container_width=True
                                     )
                                 else:

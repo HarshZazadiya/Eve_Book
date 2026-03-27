@@ -167,7 +167,7 @@ async def create_user(request: CreateUserRequest,db: db_dependency):
         "role" : user.role
     }
     
-    workflow_request_sync(data, "http://localhost:5678/webhook/new", "POST")
+    workflow_request_sync(data, "http://n8n:5678/webhook/new", "POST")
     return {"id": user.id, "username": user.username}
 
 @router.post("/host", status_code = 201)
@@ -196,7 +196,7 @@ async def create_host(request: CreateHostRequest,db: db_dependency):
         "email" : host.email,
         "role" : "host"
     }
-    workflow_request_sync(data, "http://localhost:5678/webhook/new", "POST")
+    workflow_request_sync(data, "http://n8n:5678/webhook/new", "POST")
     return {"id": host.id, "company_name": host.company_name}
 
 @router.get("/me")

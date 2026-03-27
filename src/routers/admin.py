@@ -22,7 +22,10 @@ from model import Events, Users, Hosts, Bookings, Wallets
 from fastapi import APIRouter, Depends, HTTPException, Body
 from routers.auth import oauth2_bearer, SECRET_KEY, ALGORITHM
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(
+        prefix = "/admin", 
+        tags = ["Admin"]
+    )
 
 # ---------------- DB ----------------
 def get_db():

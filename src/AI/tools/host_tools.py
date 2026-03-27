@@ -2,7 +2,6 @@ import os
 import json
 import redis  
 import shutil
-import asyncio
 from typing import Optional
 from datetime import datetime
 from database import SessionLocal
@@ -148,13 +147,13 @@ def get_host_events(host_id: int) -> list:
 
 @tool
 def create_host_event(
-    host_id: int,
-    title: str,
-    venue: str,
-    date: str,
-    seats: int,
-    ticket_price: int,
-    document_path: Optional[str] = None
+    host_id : int,
+    title : str,
+    venue : str,
+    date : str,
+    seats : int,
+    ticket_price : int,
+    document_path : Optional[str] = None
 ) -> dict:
     """
     Create a new event as a host.
@@ -165,31 +164,28 @@ def create_host_event(
     
     db = SessionLocal()
     try:
-        # Check wallet balance
         wallet = db.query(Wallets).filter(
             Wallets.owner_type == "host", 
             Wallets.owner_id == host_id
         ).first()
         
         if not wallet or wallet.balance < HOSTING_FEE:
-            return {"error": "Insufficient wallet balance (need ₹500)"}
+            return {"error" : "Insufficient wallet balance (need ₹500)"}
         
-        # Deduct fee
         wallet.balance -= HOSTING_FEE
+
         admin_wallet = db.query(Wallets).filter(Wallets.owner_type == "admin").first()
-        
         if admin_wallet:
             admin_wallet.balance += HOSTING_FEE
             
-        # Record payment
         payment = HostingPayments(
             host_id = host_id,
             amount = HOSTING_FEE,
             status = "success"
         )
         db.add(payment)
-        
-        # Create event
+
+        # CREATE EVENT FIRST
         event = Events(
             title = title,
             venue = venue,
@@ -201,60 +197,60 @@ def create_host_event(
             sheet_id = ""
         )
         db.add(event)
-        
-        # Handle document
+        db.commit()
+        db.refresh(event)
+
+        # NOW CALL N8N
         safe_title = title.replace(" ", "_").replace("/", "").replace("\\", "")
+        host = db.query(Hosts).filter(Hosts.id == host_id).first()
+
+        data = {
+            "event_id" : event.id,
+            "event_name" : title,
+            "event_date" : str(date),
+            "sheet_name" : f"{safe_title}_attendees",
+            "host_credentials" : host.email
+        }
+
+        result = workflow_request_sync(
+            data,
+            "http://n8n:5678/webhook/new-event",
+            "POST"
+        )
+
+        if not result or "sheet_id" not in result:
+            raise Exception("Failed to create sheet in n8n")
+
+        event.sheet_id = result["sheet_id"]
+        db.commit()
+
+        # FILE HANDLING
         filename = f"{host_id}_{event.id}_{safe_title}.pdf"
         file_path = os.path.join(UPLOAD_DIR, filename)
-        host_name = db.query(Hosts).filter(Hosts.id == host_id).first().company_name
-        
+
         if document_path and os.path.exists(document_path):
             shutil.copy2(document_path, file_path)
         else:
             from reportlab.pdfgen import canvas
             c = canvas.Canvas(file_path)
-            c.drawString(100, 820, f"Host: {host_name}")
-            c.drawString(100, 800, f"Host ID: {host_id}")
-            c.drawString(100, 780, f"Event: {title}")
-            c.drawString(100, 760, f"Venue: {venue}")
-            c.drawString(100, 740, f"Date: {date}")
-            c.drawString(100, 720, f"Seats: {seats}")
-            c.drawString(100, 700, f"Price: INR {ticket_price}")
+            c.drawString(100, 800, f"Event: {title}")
+            c.drawString(100, 780, f"Venue: {venue}")
+            c.drawString(100, 760, f"Date: {date}")
+            c.drawString(100, 740, f"Seats: {seats}")
+            c.drawString(100, 720, f"Price: INR {ticket_price}")
             c.save()
-        
-        # Update event with document path
+
         event.document_path = filename
-        
-        
-        # Add to vector store
-        add_document_to_store(event.id, file_path)
-        
-        # Clear cache - simple delete, no asyncio
-        if redis_client:
-            try:
-                redis_client.delete(f"host_events:{host_id}")
-            except:
-                pass
-        host = db.query(Hosts).filter(Hosts.id == host_id).first()
-        total_events = db.query(Events).filter(Events.host_id == host_id).count()
-        data = {
-          "event_id" : total_events,
-          "event_name" : title,
-          "event_date" : str(date),
-          "sheet_name" : f"{safe_title}_{'attendees'}",
-          "host_credentials" : host.email
-        }
-
-        result = workflow_request_sync(data, "http://localhost:5678/webhook/new-event", "POST")
-        event.sheet_id = result.get("sheet_id")
-
-        db.add(event)
         db.commit()
+
+        # VECTOR STORE
+        add_document_to_store(event.id, file_path)
+
         return {
-            "event_id": event.id,
-            "message": "Event created successfully"
+            "event_id" : event.id,
+            "message" : "Event created successfully"
         }
-        
+
     except Exception as e:
         db.rollback()
         return {"error": str(e)}
@@ -305,7 +301,16 @@ def delete_host_event(host_id: int, event_id: int) -> dict:
         
         db.delete(event)
         db.commit()
-        
+        webhook_data = {
+            "event_id" : event_id,
+            "sheet_id" : event.sheet_id
+        }
+
+        workflow_request_sync(
+            webhook_data,
+            "http://n8n:5678/webhook/event",
+            "DELETE"
+        )
         # Clear cache
         if redis_client:
             try:
@@ -433,7 +438,7 @@ def update_host_event(
                 }
                 workflow_request_sync(
                     webhook_data,
-                    "http://localhost:5678/webhook/event",
+                    "http://n8n:5678/webhook/event",
                     "PUT"
                 )
         # Clear Redis cache

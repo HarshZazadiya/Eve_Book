@@ -426,7 +426,8 @@ if __name__ == "__main__":
     print("🚀 File System MCP Server Starting...")
     print(f"📁 Workspace: {WORKSPACE}")
     print("🌐 Listening on http://127.0.0.1:8001/sse")
-    mcp.run(transport="sse", host="127.0.0.1", port=8001)
+    # mcp.run(transport="sse", host="127.0.0.1", port=8001)
+    mcp.run(transport="sse", host="0.0.0.0", port=8001)
 
 
 # if __name__ == "__main__":

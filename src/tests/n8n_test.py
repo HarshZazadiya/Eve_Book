@@ -98,14 +98,37 @@ print(f"Secret being sent: '{header_secret}'")
 # Host an event
 # ===========================================================================================================
 
-data = {
-  "event_id" : 1,
-  "event_name" : "Fresher Party",
-  "event_date" : "2026-03-23",
-  "sheet_name" : "Fresher_Party_attendees",
-  "host_credentials" : "harshzazadiya.aids22@scet.ac.in"
+# data = {
+#   "event_id" : 1,
+#   "event_name" : "Fresher Party",
+#   "event_date" : "2026-03-23",
+#   "sheet_name" : "Fresher_Party_attendees",
+#   "host_credentials" : "harshzazadiya.aids22@scet.ac.in"
+# }
+
+# result = asyncio.run(workflow_request(data, "http://localhost:5678/webhook-test/new-event", "POST"))
+# print("Status:", result.get("sheet_id"))  
+
+# ===========================================================================================================
+# Delete Booking
+# ===========================================================================================================
+temp = "attendees"
+webhook_data = {
+    "user_id": 1,
+    "user_name": "harsh",
+    "user_email": "harshzazadiya@gmail.com",
+    "event_id": 1,
+    "event_title": "Fresher Party",
+    "booking_id": 1,
+    "sheet_id" : "1bORW5okEkbNJ2rqBC3JCs5qPDYDzRdA9vUccwLxSidA",
+    "sheet_name" : f"Freser_Party_{temp}"
 }
 
-result = asyncio.run(workflow_request(data, "http://localhost:5678/webhook-test/new-event", "POST"))
-print("Status:", result.get("sheet_id"))  
-
+respone = requests.delete(
+    "http://localhost:5678/webhook-test/event", 
+    json = webhook_data, 
+    headers = {
+        "Authorization" : header_secret
+    }                 
+)
+print(respone)

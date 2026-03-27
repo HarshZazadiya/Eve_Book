@@ -7,7 +7,7 @@ client = MultiServerMCPClient(
     {
         "file_handling": {
             "transport": "sse",
-            "url": "http://127.0.0.1:8001/sse"
+            "url": "http://mcp:8001/sse"
         }
     }
 )

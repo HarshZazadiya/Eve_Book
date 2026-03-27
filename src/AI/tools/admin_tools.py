@@ -2,6 +2,7 @@ import os
 from database import SessionLocal
 from sqlalchemy.orm import Session
 from langchain_core.tools import tool
+from AI.tools.workflows.workflow import workflow_request_sync
 from model import Users, Hosts, Events, Bookings, Wallets, BookingPayments, HostingPayments, HostPromotions
 
 # ==================================================
@@ -188,7 +189,16 @@ def delete_event_by_id(event_id: int, admin_id: int) -> dict:
             file_path = os.path.join("uploads", event.document_path)
             if os.path.exists(file_path):
                 os.remove(file_path)
+        webhook_data = {
+            "event_id" : event_id,
+            "sheet_id" : event.sheet_id
+        }
 
+        workflow_request_sync(
+            webhook_data,
+            "http://n8n:5678/webhook/event",
+            "DELETE"
+        )
         db.delete(event)
         db.commit()
         return {"message": f"Event {event_id} deleted and refunds processed"}
@@ -218,11 +228,24 @@ def delete_booking_by_id(booking_id: int, admin_id: int) -> dict:
             return {"error": "Admin access required"}
         
         booking = db.query(Bookings).filter(Bookings.id == booking_id).first()
-
+        user = db.query(Users).filter(Users.id == booking.user_id).first()
+        event = db.query(Events).filter(Events.id == booking.event_id).first()
         if not booking:
             return {"error": "Booking not found"}
 
         refund_booking(db, booking)
+        webhook_data = {
+            "user_id" : user.id,
+            "user_name" : user.username,
+            "user_email" : user.email,
+            "event_id" : event.id,
+            "sheet_id" : event.sheet_id,
+            "sheet_name" : f"{event.title}_attendees",
+            "event_title" : event.title,
+            "event_venue" : event.venue,
+            "booking_id" : booking.id
+        }
+        workflow_request_sync(webhook_data, "http://n8n:5678/webhook/booking", "DELETE")
         db.commit()
         return {"message": f"Booking {booking_id} deleted & refunded"}
     except Exception as e:

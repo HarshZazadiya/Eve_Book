@@ -192,7 +192,6 @@ def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
         db.refresh(booking_payment)
         
         # send all data to webhook
-        temp = "attendees"
         webhook_data = {
             "user_id": authenticated_user_id,
             "user_name": user.username,
@@ -206,10 +205,10 @@ def book_event_for_user(event_id: int, authenticated_user_id: int) -> dict:
             "total_amount": event.ticket_price,
             "booking_id": booking.id,
             "sheet_id" : event.sheet_id,
-            "sheet_name" : f"Freser_Party_{temp}"
+            "sheet_name" : f"{event.title}_attendees"
         }
     
-        workflow_request_sync(webhook_data, "http://localhost:5678/webhook/event", "POST")
+        workflow_request_sync(webhook_data, "http://n8n:5678/webhook/event", "POST")
         return {
             "message": f"Successfully booked {event.title}",
             "booking_id": booking.id,
@@ -272,7 +271,19 @@ def cancel_user_booking(booking_id: int, authenticated_user_id: int) -> dict:
         db.delete(payment)
         db.delete(booking)
         db.commit()
-        
+        user = db.query(Users).filter(Users.id == authenticated_user_id).first()
+        webhook_data = {
+            "user_id" : authenticated_user_id,
+            "user_name" : user.username,
+            "user_email" : user.email,
+            "event_id" : event.id,
+            "sheet_id" : event.sheet_id,
+            "sheet_name" : f"{event.title}_attendees",
+            "event_title" : event.title,
+            "event_venue" : event.venue,
+            "booking_id" : booking.id
+        }
+        workflow_request_sync(webhook_data, "http://n8n:5678/webhook/booking", "DELETE")
         return {
             "message": f"Booking cancelled. ₹{payment.amount} refunded.",
             "refund_amount": payment.amount
@@ -352,7 +363,7 @@ def promote_user_to_host(authenticated_user_id: int) -> dict:
             "fees_paid" : 10000
         }
         
-        workflow_request_sync(data, "http://localhost:5678/webhook/promote", "POST")
+        workflow_request_sync(data, "http://n8n:5678/webhook/promote", "POST")
         
         return {"message": "Successfully promoted to host!"}
     except Exception as e:

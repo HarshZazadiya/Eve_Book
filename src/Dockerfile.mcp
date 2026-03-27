@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# MCP server only needs its own slim dependencies
+COPY AI/local_mcp/pyproject.toml .
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    fastmcp>=3.1.0 \
+    pypdf>=6.7.1 \
+    reportlab>=4.4.10 \
+    mcp>=1.26.0
+    
+# Copy only the MCP server code
+COPY AI/local_mcp/file_handle/ ./file_handle/
+
+RUN mkdir -p /app/workspace
+
+EXPOSE 8001
+
+# Patch host from 127.0.0.1 → 0.0.0.0 at build time so the server
+# binds to all interfaces inside the container
+RUN sed -i 's/host="127\.0\.0\.1"/host="0.0.0.0"/' /app/file_handle/file_handling_server.py
+
+CMD ["python", "file_handle/file_handling_server.py"]

@@ -1,151 +1,12 @@
-# services:
-#   postgres:
-#     image: postgres:16-alpine
-#     container_name: event_postgres
-#     restart: always
-#     environment:
-#       POSTGRES_USER: postgres
-#       POSTGRES_PASSWORD: postgres
-#       POSTGRES_DB: EventBooking
-#     ports:
-#       - "5432:5432"
-#     volumes:
-#       - postgres_data:/var/lib/postgresql/data
-#     healthcheck:
-#       test: ["CMD-SHELL", "pg_isready -U postgres"]
-#       interval: 5s
-#       timeout: 5s
-#       retries: 5
-
-#   redis:
-#     image: redis:7-alpine
-#     container_name: event_redis
-#     ports:
-#       - "6379:6379"
-#     healthcheck:
-#       test: ["CMD", "redis-cli", "ping"]
-#       interval: 5s
-#       timeout: 5s
-#       retries: 5
-
-#   ollama:
-#     image: ollama/ollama:latest
-#     container_name: event_ollama
-#     ports:
-#       - "11434:11434"
-#     volumes:
-#       - ollama_data:/root/.ollama
-#     healthcheck:
-#       test: ["CMD", "ollama", "list"]
-#       interval: 10s
-#       timeout: 10s
-#       retries: 5
-
-#   app:
-#     build: .
-#     container_name: event_booking_app
-#     ports:
-#       - "8000:8000"
-#       - "8501:8501"
-#     depends_on:
-#       postgres:
-#         condition: service_healthy
-#       redis:
-#         condition: service_healthy
-#       ollama:
-#         condition: service_healthy
-#     environment:
-#       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
-#       REDIS_URL: redis://redis:6379
-#       OLLAMA_HOST: http://ollama:11434
-#       SECRET_KEY: ${SECRET_KEY}
-#       ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY}
-#       DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME}
-#       DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
-#       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
-#     env_file:
-#       - .env
-#     volumes:
-#       - ./uploads:/app/uploads
-#       - ./vector_store:/app/vector_store
-#     working_dir: /app
-#     stdin_open: true
-#     tty: true
-
-# volumes:
-#   postgres_data:
-#   ollama_data:
-
-# =============================================================================================================================
-# services:
-#   postgres:
-#     image: ankane/pgvector:latest
-#     container_name: event_postgres
-#     restart: always
-#     environment:
-#       POSTGRES_USER: postgres
-#       POSTGRES_PASSWORD: postgres
-#       POSTGRES_DB: EventBooking
-#     ports:
-#       - "5433:5432"
-#     volumes:
-#       - postgres_data:/var/lib/postgresql/data
-#     healthcheck:
-#       test: ["CMD-SHELL", "pg_isready -U postgres"]
-#       interval: 5s
-#       timeout: 5s
-#       retries: 5
-
-#   redis:
-#     image: redis:7-alpine
-#     container_name: event_redis
-#     ports:
-#       - "6379:6379"
-#     healthcheck:
-#       test: ["CMD", "redis-cli", "ping"]
-#       interval: 5s
-#       timeout: 5s
-#       retries: 5
-
-#   app:
-#     build: .
-#     container_name: event_booking_app
-#     ports:
-#       - "8000:8000"
-#       - "8501:8501"
-#     depends_on:
-#       postgres:
-#         condition: service_healthy
-#       redis:
-#         condition: service_healthy
-#     environment:
-#       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
-#       REDIS_URL: redis://redis:6379
-#       API_BASE_URL: http://app:8000
-#       SECRET_KEY: ${SECRET_KEY}
-#       ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY}
-#       DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME}
-#       DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL}
-#       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
-#       GROQ_API_KEY: ${GROQ_API_KEY}
-#     env_file:
-#       - .env
-#     volumes:
-#       - ./uploads:/app/uploads
-#       - ./vector_store:/app/vector_store
-#     working_dir: /app
-#     stdin_open: true
-#     tty: true
-
-# volumes:
-#   postgres_data:
-
-
 services:
+
+  # ─────────────────────────────────────────────
+  # PostgreSQL with pgvector
+  # ─────────────────────────────────────────────
   postgres:
     image: ankane/pgvector:latest
-    container_name: event_postgres
-    restart: always
+    container_name: evebook_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -154,35 +15,114 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d EventBooking"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # Redis (optional caching for host tools)
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: evebook_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # MCP File Server (FastMCP over SSE)
+  # ─────────────────────────────────────────────
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: evebook_mcp
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - mcp_workspace:/app/workspace
+
+  # ─────────────────────────────────────────────
+  # FastAPI Backend
+  # ─────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["bash", "/app/docker/start-api.sh"]
+    container_name: evebook_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/EventBooking
+      REDIS_URL: redis://redis:6379/0
+      MCP_SERVER_URL: http://mcp:8001/sse
+    volumes:
+      - uploads:/app/uploads
+      - vector_store:/app/vector_store
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────
+  # Streamlit Frontend
+  # ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: evebook_frontend
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - .env
+
+  # ─────────────────────────────────────────────
+  # n8n Workflow Automation
+  # ─────────────────────────────────────────────
   n8n:
     image: docker.n8n.io/n8nio/n8n
-    container_name: n8n
+    container_name: evebook_n8n
+    restart: unless-stopped
     ports:
       - "5678:5678"
+    environment:
+      GENERIC_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    environment:
-      - GENERIC_TIMEZONE=Asia/Kolkata
-      - TZ=Asia/Kolkata
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - N8N_RUNNERS_ENABLED=true
-    volumes:
-      - n8n_data:/home/node/.n8n
-    restart: unless-stopped
 
 volumes:
+  postgres_data:
+  mcp_workspace:
+  uploads:
+  vector_store:
   n8n_data:
     name: n8n_data
-  postgres_data:
-
-
-#  docker run -it --rm `
-#    --name n8n `
-#    -p 5678:5678 `
-#    -e GENERIC_TIMEZONE="Asia/Kolkata" `
-#    -e TZ="Asia/Kolkata" `
-#    -e N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true `
-#    -e N8N_RUNNERS_ENABLED=true `
-#    -v n8n_data:/home/node/.n8n `
-#    docker.n8n.io/n8nio/n8n
