@@ -196,45 +196,46 @@ http://127.0.0.1:8001/sse
 ## 📂 Project Structure
 ```bash
 src/
-├── main.py                   # FastAPI app, lifespan (startup/shutdown)
-├── app.py                    # Streamlit frontend
-├── model.py                  # SQLAlchemy ORM models
-├── database.py               # Engine + SessionLocal
+├── AI/
+│   └── local_mcp/
+│   │   ├── main.py
+│   │   ├── pyproject.toml
+│   │   └── file_handle/
+│   │       └── file_handling_server.py   # FastMCP filesystem server
+│   ├── tools/
+│   │   ├── user_tools.py                 # Tools available to users
+│   │   ├── host_tools.py                 # Tools available to hosts
+│   │   ├── admin_tools.py                # Tools available to admins
+│   │   └── default_tools.py              # Tools available to all roles (wallet)
+│   ├── utils/
+│   │   ├── state.py                      # AgentState TypedDict
+│   │   └── memories.py                   # search_memory(), store_memory(), delete_memory()
+│   ├── subgraphs/
+│   │   ├── extractor_graph.py            # Memory extraction subgraph (Llama-3.3-70b)
+│   │   └── summarizer_graph.py           # Conversation summarization subgraph (Llama-3.3-70b)
+│   ├── RAG.py                            # FAISS vector store, LLM + embeddings init, search_documents tool
+│   ├── graph.py                          # LangGraph graph definition, agent node, HITL logic, run_agent()
+│   ├── mcp_manager.py                    # MultiServerMCPClient connecting to :8001/sse
+│   └── user_config.py                    # Per-user sensitive tool settings (UserSettings table)
+├── routers/
+│   ├── auth.py                           # /auth — login, register user/host
+│   ├── user.py                           # /user — events, bookings, promote-to-host
+│   ├── host.py                           # /host — event CRUD, document upload
+│   ├── admin.py                          # /admin — platform management
+│   ├── chatbot.py                        # /chat — AI chat, threads, HITL, settings
+│   └── default.py                        # /default — wallet (shared by all roles)
+├── uploads/                              # Uploaded event PDFs (served as static files)
+├── vector_store/                         # FAISS index (built at startup, deleted at shutdown)
+├── main.py                               # FastAPI app, lifespan (startup/shutdown)
+├── app.py                                # Streamlit frontend
+├── model.py                              # SQLAlchemy ORM models
+├── database.py                           # Engine + SessionLocal
 ├── requirements.txt
 ├── Dockerfile
-├── docker-compose.yaml       # PostgreSQL (pgvector) service
+├── docker-compose.yaml                   # PostgreSQL (pgvector) service
 ├── start.sh
-├── wait_ollama.sh
-├── uploads/                  # Uploaded event PDFs (served as static files)
-├── vector_store/             # FAISS index (built at startup, deleted at shutdown)
-├── routers/
-│   ├── auth.py               # /auth — login, register user/host
-│   ├── user.py               # /user — events, bookings, promote-to-host
-│   ├── host.py               # /host — event CRUD, document upload
-│   ├── admin.py              # /admin — platform management
-│   ├── chatbot.py            # /chat — AI chat, threads, HITL, settings
-│   └── default.py            # /default — wallet (shared by all roles)
-└── AI/
-    ├── RAG.py                # FAISS vector store, LLM + embeddings init, search_documents tool
-    ├── graph.py              # LangGraph graph definition, agent node, HITL logic, run_agent()
-    ├── mcp_manager.py        # MultiServerMCPClient connecting to :8001/sse
-    ├── user_config.py        # Per-user sensitive tool settings (UserSettings table)
-    ├── tools/
-    │   ├── user_tools.py     # Tools available to users
-    │   ├── host_tools.py     # Tools available to hosts
-    │   ├── admin_tools.py    # Tools available to admins
-    │   └── default_tools.py  # Tools available to all roles (wallet)
-    ├── utils/
-    │   ├── state.py          # AgentState TypedDict
-    │   └── memories.py       # search_memory(), store_memory(), delete_memory()
-    ├── subgraphs/
-    │   ├── extractor_graph.py   # Memory extraction subgraph (Llama-3.3-70b)
-    │   └── summarizer_graph.py  # Conversation summarization subgraph (Llama-3.3-70b)
-    └── local_mcp/
-        ├── main.py
-        ├── pyproject.toml
-        └── file_handle/
-            └── file_handling_server.py   # FastMCP filesystem server
+└── wait_ollama.sh
+
 ```
 
 
